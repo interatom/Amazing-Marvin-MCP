@@ -9,8 +9,14 @@ import pytest
 import requests
 
 from amazing_marvin_mcp.main import delete_document as delete_document_tool
+from amazing_marvin_mcp.main import get_categories
 from amazing_marvin_mcp.main import get_child_tasks as get_child_tasks_tool
+from amazing_marvin_mcp.main import get_completed_tasks_for_date
+from amazing_marvin_mcp.main import get_goals
+from amazing_marvin_mcp.main import get_labels
+from amazing_marvin_mcp.main import get_tasks
 from amazing_marvin_mcp.analytics import (
+    _get_daily_productivity_db,
     get_completed_tasks,
     get_daily_productivity_overview,
     get_productivity_summary,
@@ -21,6 +27,8 @@ from amazing_marvin_mcp.projects import create_project_with_tasks
 from amazing_marvin_mcp.response_models import Reference
 from amazing_marvin_mcp.task_processor import create_clean_task
 from amazing_marvin_mcp.tasks import (
+    _get_all_children_db,
+    apply_fields,
     batch_create_tasks,
     get_all_tasks_impl,
     get_daily_focus,
@@ -264,6 +272,7 @@ class TestTimezoneAwareness:
 
     def _make_api_client(self):
         client = MagicMock(spec=MarvinAPIClient)
+        client.has_couchdb = False  # force REST path so these timezone assertions hold
         client.get_tasks.return_value = []
         client.get_done_items.return_value = []
         client.get_due_items.return_value = []
@@ -550,17 +559,21 @@ class TestFullAccessToken:
 class TestGetAllTasksFieldProjection:
     """Unit tests for get_all_tasks fields parameter."""
 
+    _TASK = {"_id": "t1", "title": "Task One", "note": "details", "parentId": "cat1"}
+
     def _make_api_client(self) -> MagicMock:
         client = MagicMock(spec=MarvinAPIClient)
+        # Exercise the DB path — find_docs returns the same task the REST path would
+        client.has_couchdb = True
+        client.find_docs.return_value = {"docs": [self._TASK], "bookmark": None}
+        # REST fallbacks kept for completeness
         client.get_tasks.return_value = []
         client.get_due_items.return_value = []
         client.get_projects.return_value = []
         client.get_categories.return_value = [
             {"_id": "cat1", "type": "category", "title": "Work"}
         ]
-        client.get_children.return_value = [
-            {"_id": "t1", "title": "Task One", "note": "details", "parentId": "cat1"}
-        ]
+        client.get_children.return_value = [self._TASK]
         return client
 
     def test_fields_none_returns_full_task_dicts(self):
@@ -596,6 +609,97 @@ class TestGetAllTasksFieldProjection:
         assert "_id" in task
 
 
+class TestFieldsProjectionOnRestTools:
+    """fields param on REST-only tools (get_tasks, get_categories, etc.) — no DB needed."""
+
+    def _make_client(self) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.has_couchdb = False
+        client.get_tasks.return_value = [
+            {"_id": "t1", "title": "T1", "note": "n", "dueDate": "2026-04-21"}
+        ]
+        client.get_due_items.return_value = [
+            {"_id": "t2", "title": "T2", "dueDate": "2026-04-20"}
+        ]
+        client.get_projects.return_value = [
+            {"_id": "p1", "title": "Proj", "type": "project", "note": "pnote"}
+        ]
+        client.get_categories.return_value = [
+            {"_id": "c1", "title": "Cat", "note": "cnote"}
+        ]
+        client.get_labels.return_value = [
+            {"_id": "l1", "title": "urgent", "color": "#f00"}
+        ]
+        client.get_goals.return_value = [
+            {"_id": "g1", "title": "Goal", "note": "gnote"}
+        ]
+        client.get_done_items.return_value = [
+            {"_id": "d1", "title": "Done", "doneAt": 1000}
+        ]
+        return client
+
+    def test_apply_fields_none_returns_all(self):
+        items = [{"_id": "x", "title": "T", "note": "n"}]
+        assert apply_fields(items, None) == items
+
+    def test_apply_fields_projects_keys(self):
+        items = [{"_id": "x", "title": "T", "note": "n"}]
+        result = apply_fields(items, ["title"])
+        assert set(result[0].keys()) == {"_id", "title"}
+
+    def test_apply_fields_silently_drops_missing(self):
+        items = [{"_id": "x", "title": "T"}]
+        result = apply_fields(items, ["_id", "nonexistent"])
+        assert "nonexistent" not in result[0]
+        assert "_id" in result[0]
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_get_tasks_fields(self, mock_create):
+        mock_create.return_value = self._make_client()
+        result = asyncio.run(get_tasks(fields=["title"]))
+        assert result.success
+        # result.data is list[CleanTask] — projection removes dueDate before task processing
+        assert len(result.data) >= 1
+        task = result.data[0]
+        assert task.title == "T1"
+        assert task.due_date is None  # dueDate projected away by fields=["title"]
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_get_categories_fields(self, mock_create):
+        mock_create.return_value = self._make_client()
+        result = asyncio.run(get_categories(fields=["title"]))
+        assert result.success
+        assert len(result.data) >= 1
+        assert set(result.data[0].keys()) == {"_id", "title"}
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_get_labels_fields(self, mock_create):
+        mock_create.return_value = self._make_client()
+        result = asyncio.run(get_labels(fields=["title"]))
+        assert result.success
+        labels = result.data["labels"]
+        assert len(labels) >= 1
+        assert set(labels[0].keys()) == {"_id", "title"}
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_get_goals_fields(self, mock_create):
+        mock_create.return_value = self._make_client()
+        result = asyncio.run(get_goals(fields=["title"]))
+        assert result.success
+        goals = result.data["goals"]
+        assert len(goals) >= 1
+        assert set(goals[0].keys()) == {"_id", "title"}
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_get_completed_tasks_for_date_fields(self, mock_create):
+        mock_create.return_value = self._make_client()
+        result = asyncio.run(get_completed_tasks_for_date(date="2026-04-21", fields=["title"]))
+        assert result.success
+        items = result.data["all_completed"]
+        assert len(items) >= 1
+        assert set(items[0].keys()) == {"_id", "title"}
+
+
 class TestGetChildTasksTypeSplit:
     """Regression tests for the category-leaks-into-tasks bug.
 
@@ -606,7 +710,9 @@ class TestGetChildTasksTypeSplit:
 
     def _make_client(self, children: list) -> MagicMock:
         client = MagicMock(spec=MarvinAPIClient)
-        client.get_children.return_value = children
+        # Exercise the DB path — find_docs returns the same children the REST path would
+        client.has_couchdb = True
+        client.find_docs.return_value = {"docs": children, "bookmark": None}
         return client
 
     @patch("amazing_marvin_mcp.main.create_api_client")
@@ -1066,6 +1172,1044 @@ class TestNewMcpTools:
 
         asyncio.run(delete_reminders_tool(["r1", "r2"]))
         client.delete_reminders.assert_called_once_with(["r1", "r2"])
+
+
+class TestDescribeDocType:
+    """Unit tests for describe_doc_type and DOC_TYPE_SCHEMAS.
+
+    describe_doc_type is only registered with DB creds. These tests verify
+    the schema dict directly (no DB needed) plus confirm the tool is absent
+    without creds.
+    """
+
+    def test_describe_doc_type_not_registered_without_db_creds(self):
+        import asyncio
+        from amazing_marvin_mcp.main import mcp
+        tools = asyncio.run(mcp.list_tools())
+        names = [t.name for t in tools]
+        assert "describe_doc_type" not in names
+
+    def test_all_14_doc_types_in_schemas(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS, VALID_DOC_TYPES
+        assert set(DOC_TYPE_SCHEMAS.keys()) == VALID_DOC_TYPES
+        assert len(DOC_TYPE_SCHEMAS) == 14
+
+    def test_each_schema_has_required_keys(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        required = {"fields", "applicable_filters", "not_applicable", "gotchas", "examples"}
+        for doc_type, schema in DOC_TYPE_SCHEMAS.items():
+            missing = required - set(schema.keys())
+            assert not missing, f"{doc_type} schema missing: {missing}"
+
+    def test_tasks_schema_has_core_fields(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        fields = DOC_TYPE_SCHEMAS["Tasks"]["fields"]
+        for key in ("_id", "db", "title", "done", "doneAt", "dueDate", "day",
+                    "isStarred", "isFrogged", "labelIds", "parentId", "note", "timeEstimate"):
+            assert key in fields, f"Tasks schema missing field: {key}"
+
+    def test_categories_schema_mentions_note_gotcha(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        gotchas = " ".join(DOC_TYPE_SCHEMAS["Categories"]["gotchas"])
+        assert "note" in gotchas.lower()
+        assert "rest" in gotchas.lower() or "/categories" in gotchas.lower()
+
+    def test_tasks_schema_lists_is_frogged_as_applicable(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        assert "is_frogged" in DOC_TYPE_SCHEMAS["Tasks"]["applicable_filters"]
+
+    def test_categories_schema_lists_priority_as_applicable(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        assert "priority" in DOC_TYPE_SCHEMAS["Categories"]["applicable_filters"]
+
+    def test_tasks_schema_lists_priority_as_not_applicable(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        not_applicable = " ".join(DOC_TYPE_SCHEMAS["Tasks"]["not_applicable"])
+        assert "priority" in not_applicable
+
+    def test_categories_schema_lists_is_frogged_as_not_applicable(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        not_applicable = " ".join(DOC_TYPE_SCHEMAS["Categories"]["not_applicable"])
+        assert "is_frogged" in not_applicable
+
+    def test_tasks_gotchas_mention_isStarred_number_storage(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        gotchas = " ".join(DOC_TYPE_SCHEMAS["Tasks"]["gotchas"])
+        assert "isStarred" in gotchas
+        assert "number" in gotchas.lower() or "1/2/3" in gotchas
+
+    def test_each_schema_has_at_least_one_example(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
+        for doc_type, schema in DOC_TYPE_SCHEMAS.items():
+            assert schema["examples"], f"{doc_type} has no examples"
+
+    def test_doc_type_literal_matches_schema_keys(self):
+        from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS, DocType
+        import typing
+        valid = set(typing.get_args(DocType))
+        assert valid == set(DOC_TYPE_SCHEMAS.keys())
+
+
+class TestBuildSelector:
+    """Unit tests for build_selector — pure Python, no I/O.
+
+    Covers each row of the filter dispatch table plus mixed-type gotchas
+    and per-doc_type validation.
+    """
+
+    from amazing_marvin_mcp.db_filters import build_selector
+
+    def _get_frags(self, selector: dict) -> list[dict]:
+        """Extract fragment list from $and selector, or wrap single selector."""
+        if "$and" in selector:
+            return selector["$and"]
+        return [selector]
+
+    def _has_frag(self, selector: dict, key: str, val: Any = None) -> bool:
+        frags = self._get_frags(selector)
+        for f in frags:
+            if key in f:
+                return val is None or f[key] == val
+        return False
+
+    def _get_frag(self, selector: dict, key: str) -> Any:
+        for f in self._get_frags(selector):
+            if key in f:
+                return f[key]
+        return None
+
+    # --- doc_type always present ---
+
+    def test_doc_type_always_in_selector(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks")
+        assert self._has_frag(sel, "db", "Tasks")
+
+    def test_single_fragment_not_wrapped_in_and(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Labels", include_deleted=True)
+        assert "db" in sel
+        assert "$and" not in sel
+
+    # --- soft-delete exclusion ---
+
+    def test_include_deleted_false_adds_deletedAt_not_exists(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks")
+        assert self._has_frag(sel, "deletedAt", {"$exists": False})
+
+    def test_include_deleted_true_omits_deletedAt_fragment(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", include_deleted=True)
+        frags = self._get_frags(sel)
+        assert not any("deletedAt" in f for f in frags)
+
+    # --- completion exclusion ---
+
+    def test_include_done_false_adds_done_ne_true_for_tasks(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks")
+        assert self._has_frag(sel, "done", {"$ne": True})
+
+    def test_include_done_false_adds_done_ne_true_for_categories(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories")
+        assert self._has_frag(sel, "done", {"$ne": True})
+
+    def test_include_done_false_omitted_for_habits(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Habits")
+        frags = self._get_frags(sel)
+        assert not any("done" in f for f in frags)
+
+    def test_include_done_true_omits_done_fragment(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", include_done=True)
+        frags = self._get_frags(sel)
+        assert not any("done" in f for f in frags)
+
+    # --- label filters ---
+
+    def test_label_ids_uses_elemMatch_in(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", label_ids=["id1", "id2"])
+        assert self._has_frag(sel, "labelIds", {"$elemMatch": {"$in": ["id1", "id2"]}})
+
+    def test_exclude_label_ids_uses_not_elemMatch(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", exclude_label_ids=["id3"])
+        assert self._has_frag(sel, "labelIds", {"$not": {"$elemMatch": {"$in": ["id3"]}}})
+
+    def test_both_label_ids_and_exclude_coexist(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", label_ids=["a"], exclude_label_ids=["b"])
+        frags = self._get_frags(sel)
+        assert any(f.get("labelIds") == {"$elemMatch": {"$in": ["a"]}} for f in frags)
+        assert any(f.get("labelIds") == {"$not": {"$elemMatch": {"$in": ["b"]}}} for f in frags)
+
+    # --- has_* existence filters ---
+
+    def test_has_due_date_true(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_due_date=True)
+        v = self._get_frag(sel, "dueDate")
+        assert v["$exists"] is True
+        assert None in v["$nin"]
+        assert "" in v["$nin"]
+
+    def test_has_due_date_false(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_due_date=False)
+        v = self._get_frag(sel, "$or")
+        assert v is not None
+        keys = [list(clause.keys())[0] for clause in v]
+        assert "dueDate" in keys
+
+    def test_has_note_true(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_note=True)
+        v = self._get_frag(sel, "note")
+        assert v is not None and v["$exists"] is True
+
+    def test_has_note_false(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_note=False)
+        frags = self._get_frags(sel)
+        assert any("$or" in f for f in frags)
+
+    def test_has_time_estimate_true(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_time_estimate=True)
+        v = self._get_frag(sel, "timeEstimate")
+        assert v is not None and v["$exists"] is True
+
+    def test_has_time_estimate_false(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_time_estimate=False)
+        frags = self._get_frags(sel)
+        assert any("$or" in f for f in frags)
+
+    def test_has_scheduled_day_true_excludes_unassigned(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_scheduled_day=True)
+        v = self._get_frag(sel, "day")
+        assert "unassigned" in v["$nin"]
+
+    def test_has_scheduled_day_false_includes_unassigned_in_empties(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", has_scheduled_day=False)
+        # Look for $or fragment that includes unassigned
+        frags = self._get_frags(sel)
+        or_frags = [f["$or"] for f in frags if "$or" in f]
+        found_unassigned = any(
+            "unassigned" in clause.get("day", {}).get("$in", [])
+            for or_clause in or_frags
+            for clause in or_clause
+        )
+        assert found_unassigned
+
+    # --- date range filters ---
+
+    def test_due_exact(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", due="2026-04-21")
+        assert self._has_frag(sel, "dueDate", "2026-04-21")
+
+    def test_due_range_after_only(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", due_after="2026-04-01")
+        v = self._get_frag(sel, "dueDate")
+        assert v["$gte"] == "2026-04-01"
+        assert "$lte" not in v
+
+    def test_due_range_before_only(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", due_before="2026-04-30")
+        v = self._get_frag(sel, "dueDate")
+        assert v["$lte"] == "2026-04-30"
+        assert "$gte" not in v
+
+    def test_due_range_both(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", due_after="2026-04-01", due_before="2026-04-30")
+        v = self._get_frag(sel, "dueDate")
+        assert v["$gte"] == "2026-04-01"
+        assert v["$lte"] == "2026-04-30"
+
+    def test_scheduled_exact(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", scheduled="2026-04-21")
+        assert self._has_frag(sel, "day", "2026-04-21")
+
+    def test_scheduled_range(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", scheduled_after="2026-04-01", scheduled_before="2026-04-07")
+        v = self._get_frag(sel, "day")
+        assert v["$gte"] == "2026-04-01"
+        assert v["$lte"] == "2026-04-07"
+
+    def test_done_after_for_tasks_converts_to_epoch_ms(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        from amazing_marvin_mcp.db_filters import _date_to_epoch_ms_start
+        sel = build_selector("Tasks", done_after="2026-04-14", include_done=True)
+        v = self._get_frag(sel, "doneAt")
+        expected = _date_to_epoch_ms_start("2026-04-14")
+        assert v["$gte"] == expected
+        assert isinstance(v["$gte"], int)
+
+    def test_done_before_for_tasks_converts_to_epoch_ms_end_of_day(self):
+        from amazing_marvin_mcp.db_filters import build_selector, _date_to_epoch_ms_end
+        sel = build_selector("Tasks", done_before="2026-04-14", include_done=True)
+        v = self._get_frag(sel, "doneAt")
+        assert v["$lte"] == _date_to_epoch_ms_end("2026-04-14")
+
+    def test_done_after_for_categories_uses_string_doneDate(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", done_after="2026-04-14", include_done=True)
+        v = self._get_frag(sel, "doneDate")
+        assert v["$gte"] == "2026-04-14"
+
+    # --- structural filters ---
+
+    def test_parent_id_appended(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", parent_id="proj123")
+        assert self._has_frag(sel, "parentId", "proj123")
+
+    def test_parent_id_unassigned(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", parent_id="unassigned")
+        assert self._has_frag(sel, "parentId", "unassigned")
+
+    def test_project_type_project(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", project_type="project")
+        assert self._has_frag(sel, "type", "project")
+
+    def test_project_type_category(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", project_type="category")
+        frags = self._get_frags(sel)
+        or_frags = [f["$or"] for f in frags if "$or" in f]
+        # Should have an $or containing type-not-project logic
+        assert or_frags
+
+    # --- boolean flags ---
+
+    def test_is_starred_true_uses_in_pattern(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", is_starred=True)
+        v = self._get_frag(sel, "isStarred")
+        assert "$in" in v
+        assert set(v["$in"]) == {True, 1, 2, 3}
+
+    def test_is_starred_false_uses_or_pattern(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", is_starred=False)
+        frags = self._get_frags(sel)
+        or_frags = [f["$or"] for f in frags if "$or" in f]
+        assert any(
+            any("isStarred" in clause for clause in or_clause)
+            for or_clause in or_frags
+        )
+
+    def test_is_frogged_true_tasks_only(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", is_frogged=True)
+        v = self._get_frag(sel, "isFrogged")
+        assert v is not None and "$in" in v
+        assert set(v["$in"]) == {True, 1, 2, 3}
+
+    def test_priority_low_for_categories(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", priority="low")
+        assert self._has_frag(sel, "priority", "low")
+
+    def test_priority_mid_not_medium(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", priority="mid")
+        assert self._has_frag(sel, "priority", "mid")
+
+    # --- contains ---
+
+    def test_contains_builds_title_note_regex_or(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", contains="refactor")
+        frags = self._get_frags(sel)
+        or_frags = [f["$or"] for f in frags if "$or" in f]
+        assert any(
+            any("title" in clause for clause in or_clause)
+            and any("note" in clause for clause in or_clause)
+            for or_clause in or_frags
+        )
+
+    def test_contains_is_case_insensitive(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", contains="Hello")
+        frags = self._get_frags(sel)
+        or_frags = [f["$or"] for f in frags if "$or" in f]
+        assert any(
+            any("(?i)" in clause.get("title", {}).get("$regex", "") for clause in or_clause)
+            for or_clause in or_frags
+        )
+
+    def test_contains_escapes_special_regex_chars(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", contains="hello.world+")
+        frags = self._get_frags(sel)
+        or_frags = [f["$or"] for f in frags if "$or" in f]
+        # Special chars should be escaped so they don't act as regex operators
+        regex = or_frags[0][0]["title"]["$regex"]
+        assert r"\." in regex
+        assert r"\+" in regex
+
+    # --- per-doc_type validation ---
+
+    def test_is_frogged_raises_for_non_tasks(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        with pytest.raises(ValueError, match="Tasks-only"):
+            build_selector("Categories", is_frogged=True)
+
+    def test_is_starred_raises_for_habits(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        with pytest.raises(ValueError, match="Tasks-only"):
+            build_selector("Habits", is_starred=True)
+
+    def test_priority_raises_for_tasks(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        with pytest.raises(ValueError, match="Categories-only"):
+            build_selector("Tasks", priority="high")
+
+    def test_priority_error_mentions_is_starred_alternative(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        with pytest.raises(ValueError, match="is_starred"):
+            build_selector("Tasks", priority="low")
+
+    def test_project_type_raises_for_tasks(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        with pytest.raises(ValueError, match="Categories-only"):
+            build_selector("Tasks", project_type="project")
+
+
+class TestQueryDocsTool:
+    """Unit tests for execute_query_docs orchestration — mocked api_client.
+
+    Tests the full pipeline: validation, label resolution, selector building,
+    find_docs invocation, and response shaping.
+    """
+
+    DB_LABELS = [
+        {"_id": "lbl_urgent", "title": "urgent"},
+        {"_id": "lbl_later", "title": "later"},
+        {"_id": "lbl_waiting", "title": "waiting"},
+    ]
+    SAMPLE_DOCS = [
+        {"_id": "t1", "title": "Task One", "db": "Tasks"},
+        {"_id": "t2", "title": "Task Two", "db": "Tasks"},
+    ]
+
+    def _make_client(
+        self,
+        docs: list | None = None,
+        bookmark: str | None = None,
+    ) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.get_labels.return_value = self.DB_LABELS
+        envelope = {"docs": docs if docs is not None else self.SAMPLE_DOCS}
+        if bookmark:
+            envelope["bookmark"] = bookmark
+        client.find_docs.return_value = envelope
+        return client
+
+    def _run(self, client: MagicMock, **kwargs) -> StandardResponse:
+        from amazing_marvin_mcp.query import execute_query_docs
+        defaults = dict(
+            doc_type="Tasks",
+            fields=None,
+            labels=None,
+            exclude_labels=None,
+            include_done=False,
+            include_deleted=False,
+            has_due_date=None,
+            has_note=None,
+            has_time_estimate=None,
+            has_scheduled_day=None,
+            contains=None,
+            due=None,
+            due_before=None,
+            due_after=None,
+            scheduled=None,
+            scheduled_before=None,
+            scheduled_after=None,
+            done_after=None,
+            done_before=None,
+            parent_id=None,
+            project_type=None,
+            is_starred=None,
+            is_frogged=None,
+            priority=None,
+            sort_by=None,
+            sort_desc=False,
+            limit=500,
+            bookmark=None,
+            debug=False,
+        )
+        defaults.update(kwargs)
+        import asyncio
+        return asyncio.run(execute_query_docs(client, **defaults))
+
+    # --- basic success ---
+
+    def test_returns_docs_on_success(self):
+        client = self._make_client()
+        result = self._run(client)
+        assert result.success is True
+        assert result.data["count"] == 2
+        assert len(result.data["docs"]) == 2
+
+    def test_calls_find_docs_once(self):
+        client = self._make_client()
+        self._run(client)
+        client.find_docs.assert_called_once()
+
+    # --- field projection passthrough ---
+
+    def test_fields_passed_to_find_docs(self):
+        client = self._make_client()
+        self._run(client, fields=["title", "dueDate"])
+        call_kwargs = client.find_docs.call_args.kwargs
+        assert call_kwargs["fields"] == ["title", "dueDate"]
+
+    def test_fields_returned_in_response_data(self):
+        client = self._make_client()
+        result = self._run(client, fields=["title"])
+        assert "fields_returned" in result.data
+        assert "_id" in result.data["fields_returned"]
+
+    def test_fields_none_not_in_response_data(self):
+        client = self._make_client()
+        result = self._run(client)
+        assert "fields_returned" not in result.data
+
+    # --- label resolution ---
+
+    def test_label_resolves_to_id_before_find_docs(self):
+        client = self._make_client()
+        self._run(client, labels=["urgent"])
+        client.get_labels.assert_called_once()
+        call_kwargs = client.find_docs.call_args.kwargs
+        selector = call_kwargs["selector"]
+        # The selector (possibly nested in $and) must contain labelIds with the ID
+        import json
+        serialized = json.dumps(selector)
+        assert "lbl_urgent" in serialized
+
+    def test_unknown_label_returns_empty_success_with_message(self):
+        client = self._make_client()
+        result = self._run(client, labels=["nonexistent"])
+        assert result.success is True
+        assert result.data["count"] == 0
+        assert "nonexistent" in result.summary.text
+        client.find_docs.assert_not_called()
+
+    def test_unknown_label_message_lists_available_labels(self):
+        client = self._make_client()
+        result = self._run(client, labels=["ghost"])
+        assert "urgent" in result.summary.text or "later" in result.summary.text
+
+    def test_exclude_labels_resolved_to_ids(self):
+        client = self._make_client()
+        self._run(client, exclude_labels=["later"])
+        import json
+        selector = client.find_docs.call_args.kwargs["selector"]
+        assert "lbl_later" in json.dumps(selector)
+
+    def test_unknown_exclude_label_returns_empty(self):
+        client = self._make_client()
+        result = self._run(client, exclude_labels=["phantom"])
+        assert result.success is True
+        assert result.data["count"] == 0
+        client.find_docs.assert_not_called()
+
+    def test_label_resolution_calls_get_labels_once_for_both(self):
+        client = self._make_client()
+        self._run(client, labels=["urgent"], exclude_labels=["later"])
+        client.get_labels.assert_called_once()
+
+    def test_no_labels_does_not_call_get_labels(self):
+        client = self._make_client()
+        self._run(client)
+        client.get_labels.assert_not_called()
+
+    # --- XOR validation ---
+
+    def test_due_and_due_before_raises_validation_error(self):
+        client = self._make_client()
+        result = self._run(client, due="2026-04-21", due_before="2026-04-30")
+        assert result.success is False
+        assert "due_before" in result.summary.text or "range" in result.summary.text
+        client.find_docs.assert_not_called()
+
+    def test_due_and_due_after_raises_validation_error(self):
+        client = self._make_client()
+        result = self._run(client, due="2026-04-21", due_after="2026-04-01")
+        assert result.success is False
+        client.find_docs.assert_not_called()
+
+    def test_scheduled_and_scheduled_before_raises(self):
+        client = self._make_client()
+        result = self._run(client, scheduled="2026-04-21", scheduled_before="2026-04-30")
+        assert result.success is False
+        client.find_docs.assert_not_called()
+
+    # --- unknown doc_type ---
+
+    def test_unknown_doc_type_returns_error(self):
+        client = self._make_client()
+        result = self._run(client, doc_type="SmartLists")
+        assert result.success is False
+        assert "SmartLists" in result.summary.text
+        client.find_docs.assert_not_called()
+
+    # --- per-doc_type validation via build_selector ---
+
+    def test_priority_on_tasks_returns_error(self):
+        client = self._make_client()
+        result = self._run(client, doc_type="Tasks", priority="high")
+        assert result.success is False
+        assert "Categories-only" in result.summary.text or "is_starred" in result.summary.text
+        client.find_docs.assert_not_called()
+
+    def test_is_frogged_on_habits_returns_error(self):
+        client = self._make_client()
+        result = self._run(client, doc_type="Habits", is_frogged=True)
+        assert result.success is False
+        client.find_docs.assert_not_called()
+
+    # --- shortcoming #2 smoke: Categories + fields ---
+
+    def test_categories_with_note_field(self):
+        cat_docs = [
+            {"_id": "c1", "title": "Work", "note": "Main work category"},
+            {"_id": "c2", "title": "Personal", "note": ""},
+        ]
+        client = self._make_client(docs=cat_docs)
+        result = self._run(
+            client,
+            doc_type="Categories",
+            fields=["_id", "title", "note"],
+        )
+        assert result.success is True
+        assert result.data["count"] == 2
+        call_kwargs = client.find_docs.call_args.kwargs
+        assert call_kwargs["selector"].get("db") == "Categories" or (
+            any(f.get("db") == "Categories" for f in call_kwargs["selector"].get("$and", []))
+        )
+
+    # --- Tasks post-filter for type field ---
+
+    def test_tasks_post_filter_removes_project_and_category_docs(self):
+        mixed = [
+            {"_id": "t1", "title": "Task", "db": "Tasks"},
+            {"_id": "p1", "title": "Project", "db": "Tasks", "type": "project"},
+            {"_id": "c1", "title": "Category", "db": "Tasks", "type": "category"},
+        ]
+        client = self._make_client(docs=mixed)
+        result = self._run(client, doc_type="Tasks")
+        ids = [d["_id"] for d in result.data["docs"]]
+        assert "t1" in ids
+        assert "p1" not in ids
+        assert "c1" not in ids
+
+    def test_categories_doc_type_no_post_filter(self):
+        cat_docs = [
+            {"_id": "c1", "db": "Categories", "type": "category"},
+            {"_id": "p1", "db": "Categories", "type": "project"},
+        ]
+        client = self._make_client(docs=cat_docs)
+        result = self._run(client, doc_type="Categories")
+        assert result.data["count"] == 2
+
+    # --- sort ---
+
+    def test_sort_by_passed_to_find_docs(self):
+        client = self._make_client()
+        self._run(client, sort_by="dueDate")
+        call_kwargs = client.find_docs.call_args.kwargs
+        assert call_kwargs["sort"] == [{"dueDate": "asc"}]
+
+    def test_sort_desc_inverts_direction(self):
+        client = self._make_client()
+        self._run(client, sort_by="doneAt", sort_desc=True)
+        call_kwargs = client.find_docs.call_args.kwargs
+        assert call_kwargs["sort"] == [{"doneAt": "desc"}]
+
+    def test_no_sort_by_passes_none(self):
+        client = self._make_client()
+        self._run(client)
+        call_kwargs = client.find_docs.call_args.kwargs
+        assert call_kwargs["sort"] is None
+
+    # --- pagination ---
+
+    def test_bookmark_passed_to_find_docs(self):
+        client = self._make_client()
+        self._run(client, bookmark="tok_abc")
+        call_kwargs = client.find_docs.call_args.kwargs
+        assert call_kwargs["bookmark"] == "tok_abc"
+
+    def test_bookmark_in_response_when_result_equals_limit(self):
+        docs = [{"_id": f"t{i}"} for i in range(10)]
+        client = self._make_client(docs=docs, bookmark="next_tok")
+        result = self._run(client, limit=10)
+        assert result.data.get("bookmark") == "next_tok"
+
+    def test_bookmark_in_response_when_post_filtered_below_limit(self):
+        # Regression for the raw_count fix: envelope fills the limit exactly, but
+        # post-filtering removes type=project/category docs so len(docs) < limit.
+        # The bookmark must still be forwarded because more pages exist upstream.
+        docs = [{"_id": f"t{i}"} for i in range(8)] + [
+            {"_id": "p1", "type": "project"},
+            {"_id": "c1", "type": "category"},
+        ]
+        client = self._make_client(docs=docs, bookmark="next_tok")
+        result = self._run(client, doc_type="Tasks", limit=10)
+        assert result.data.get("bookmark") == "next_tok"
+        assert result.data["count"] == 8  # post-filter dropped the 2 non-tasks
+
+    def test_no_bookmark_in_response_when_result_under_limit(self):
+        docs = [{"_id": "t1"}]
+        client = self._make_client(docs=docs, bookmark="tok")
+        result = self._run(client, limit=500)  # 1 < 500, so no bookmark
+        assert "bookmark" not in result.data
+
+    # --- query_docs NOT registered without DB creds ---
+
+    def test_query_docs_not_registered_without_db_creds(self):
+        import asyncio
+        from amazing_marvin_mcp.main import mcp
+        tools = asyncio.run(mcp.list_tools())
+        names = [t.name for t in tools]
+        assert "query_docs" not in names
+
+
+class TestCouchDBAccess:
+    """Unit tests for CouchDB/Cloudant integration — no live API calls.
+
+    Covers: has_couchdb property, find_docs URL/auth/body/fields,
+    _id auto-inclusion, _ensure_indexes idempotency and partial failure.
+    """
+
+    DB_URI = "https://account.cloudant.com"
+    DB_NAME = "amarvin"
+    DB_USER = "user"
+    DB_PASS = "pass"
+
+    def _full_client(self) -> MarvinAPIClient:
+        return MarvinAPIClient(
+            api_key="key",
+            db_uri=self.DB_URI,
+            db_name=self.DB_NAME,
+            db_user=self.DB_USER,
+            db_password=self.DB_PASS,
+        )
+
+    def _partial_client(self, **override) -> MarvinAPIClient:
+        kwargs = dict(
+            api_key="key",
+            db_uri=self.DB_URI,
+            db_name=self.DB_NAME,
+            db_user=self.DB_USER,
+            db_password=self.DB_PASS,
+        )
+        kwargs.update(override)
+        return MarvinAPIClient(**kwargs)
+
+    def _mock_response(self, payload: Any, status: int = 200) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = status
+        resp.content = b"x"
+        resp.json.return_value = payload
+        resp.raise_for_status.return_value = None
+        return resp
+
+    # --- has_couchdb property ---
+
+    def test_has_couchdb_true_when_all_four_present(self):
+        assert self._full_client().has_couchdb is True
+
+    def test_has_couchdb_false_without_uri(self):
+        assert self._partial_client(db_uri=None).has_couchdb is False
+
+    def test_has_couchdb_false_without_name(self):
+        assert self._partial_client(db_name=None).has_couchdb is False
+
+    def test_has_couchdb_false_without_user(self):
+        assert self._partial_client(db_user=None).has_couchdb is False
+
+    def test_has_couchdb_false_without_password(self):
+        assert self._partial_client(db_password=None).has_couchdb is False
+
+    def test_has_couchdb_false_when_all_missing(self):
+        assert MarvinAPIClient(api_key="key").has_couchdb is False
+
+    # --- find_docs raises when not configured ---
+
+    def test_find_docs_raises_without_credentials(self):
+        client = MarvinAPIClient(api_key="key")
+        with pytest.raises(ValueError, match="AMAZING_MARVIN_DB"):
+            client.find_docs({"db": "Tasks"})
+
+    # --- find_docs: correct URL, auth, body ---
+
+    @patch("requests.post")
+    def test_find_docs_posts_to_correct_url(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client._indexes_ensured = True  # skip index creation for this test
+        client.find_docs({"db": "Tasks"})
+        call_url = mock_post.call_args[0][0]
+        assert call_url == f"{self.DB_URI}/{self.DB_NAME}/_find"
+
+    @patch("requests.post")
+    def test_find_docs_uses_basic_auth(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"})
+        call_kwargs = mock_post.call_args.kwargs
+        assert call_kwargs["auth"] == (self.DB_USER, self.DB_PASS)
+
+    @patch("requests.post")
+    def test_find_docs_body_contains_selector_and_limit(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client._indexes_ensured = True
+        selector = {"db": "Tasks", "done": {"$ne": True}}
+        client.find_docs(selector, limit=100)
+        body = mock_post.call_args.kwargs["json"]
+        assert body["selector"] == selector
+        assert body["limit"] == 100
+
+    @patch("requests.post")
+    def test_find_docs_default_limit_is_500(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"})
+        body = mock_post.call_args.kwargs["json"]
+        assert body["limit"] == 500
+
+    # --- find_docs: fields handling ---
+
+    @patch("requests.post")
+    def test_find_docs_id_always_included_in_fields(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"}, fields=["title", "dueDate"])
+        body = mock_post.call_args.kwargs["json"]
+        assert "_id" in body["fields"]
+        assert "title" in body["fields"]
+        assert "dueDate" in body["fields"]
+
+    @patch("requests.post")
+    def test_find_docs_fields_sorted(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"}, fields=["title", "_id", "dueDate"])
+        body = mock_post.call_args.kwargs["json"]
+        assert body["fields"] == sorted(body["fields"])
+
+    @patch("requests.post")
+    def test_find_docs_no_fields_key_when_none(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"})
+        body = mock_post.call_args.kwargs["json"]
+        assert "fields" not in body
+
+    # --- find_docs: optional body keys ---
+
+    @patch("requests.post")
+    def test_find_docs_includes_sort_when_provided(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client._indexes_ensured = True
+        sort = [{"dueDate": "asc"}]
+        client.find_docs({"db": "Tasks"}, sort=sort)
+        body = mock_post.call_args.kwargs["json"]
+        assert body["sort"] == sort
+
+    @patch("requests.post")
+    def test_find_docs_includes_bookmark_when_provided(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"}, bookmark="tok123")
+        body = mock_post.call_args.kwargs["json"]
+        assert body["bookmark"] == "tok123"
+
+    @patch("requests.post")
+    def test_find_docs_no_sort_key_when_none(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = self._full_client()
+        client.find_docs({"db": "Tasks"})
+        body = mock_post.call_args.kwargs["json"]
+        assert "sort" not in body
+        assert "bookmark" not in body
+
+    # --- find_docs: return value ---
+
+    @patch("requests.post")
+    def test_find_docs_returns_full_envelope(self, mock_post: MagicMock):
+        docs = [{"_id": "t1", "title": "Task 1"}]
+        envelope = {"docs": docs, "bookmark": "next_page"}
+        mock_post.return_value = self._mock_response(envelope)
+        client = self._full_client()
+        client._indexes_ensured = True
+        result = client.find_docs({"db": "Tasks"})
+        assert result["docs"] == docs
+        assert result["bookmark"] == "next_page"
+
+    # --- find_docs: trailing slash stripped from db_uri ---
+
+    @patch("requests.post")
+    def test_find_docs_strips_trailing_slash_from_uri(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"docs": []})
+        client = MarvinAPIClient(
+            api_key="key",
+            db_uri=f"{self.DB_URI}/",  # trailing slash
+            db_name=self.DB_NAME,
+            db_user=self.DB_USER,
+            db_password=self.DB_PASS,
+        )
+        client.find_docs({"db": "Tasks"})
+        call_url = mock_post.call_args[0][0]
+        assert "//" not in call_url.replace("https://", "")
+
+
+class TestDailyProductivityDbFastPath:
+    """Unit tests for the CouchDB fast-path in _get_daily_productivity_db."""
+
+    TODAY = "2026-04-22"
+
+    def _today_ms(self) -> tuple[int, int]:
+        from datetime import datetime, timedelta, timezone
+        today_dt = datetime.strptime(self.TODAY, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        start = int(today_dt.timestamp() * 1000)
+        end = int((today_dt + timedelta(days=1)).timestamp() * 1000) - 1
+        return start, end
+
+    def _make_client(self, docs: list) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.has_couchdb = True
+        client.find_docs.return_value = {"docs": docs}
+        client.get_projects.return_value = [{"_id": "p1", "title": "P"}]
+        client.get_goals.return_value = [{"_id": "g1", "title": "G"}]
+        return client
+
+    def test_selector_structure(self):
+        client = self._make_client([])
+        _get_daily_productivity_db(client, self.TODAY)
+
+        selector = client.find_docs.call_args.kwargs["selector"]
+        assert selector["db"] == "Tasks"
+        assert selector["deletedAt"] == {"$exists": False}
+        assert "$or" in selector
+        or_clauses = selector["$or"]
+        assert len(or_clauses) == 3
+        clause_keys = [set(c.keys()) for c in or_clauses]
+        assert {"day"} in clause_keys
+        assert any("dueDate" in keys for keys in clause_keys)
+        assert any("doneAt" in keys for keys in clause_keys)
+
+    def test_partitioning(self):
+        today_start_ms, _ = self._today_ms()
+        mid_day_ms = today_start_ms + 3_600_000  # 1 hour into today
+
+        docs = [
+            {"_id": "sched", "db": "Tasks", "day": self.TODAY, "done": False},
+            {"_id": "over", "db": "Tasks", "dueDate": "2026-04-01", "done": False},
+            {"_id": "done", "db": "Tasks", "done": True, "doneAt": mid_day_ms},
+            {"_id": "unrelated", "db": "Tasks", "day": "2026-01-01", "done": False},
+        ]
+        client = self._make_client(docs)
+        result = _get_daily_productivity_db(client, self.TODAY)
+
+        assert result["scheduled_today"] == 1
+        assert result["overdue_items"] == 1
+        assert result["completed_today"] == 1
+
+    def test_api_calls_and_efficiency(self):
+        client = self._make_client([])
+        result = _get_daily_productivity_db(client, self.TODAY)
+
+        assert result["api_calls_made"] == 3
+        assert "CouchDB" in result["efficiency_note"]
+
+    def test_find_docs_and_rest_calls_exactly_once(self):
+        client = self._make_client([])
+        _get_daily_productivity_db(client, self.TODAY)
+
+        client.find_docs.assert_called_once()
+        client.get_projects.assert_called_once()
+        client.get_goals.assert_called_once()
+
+
+class TestGetAllChildrenDb:
+    """Unit tests for the BFS CouchDB fast-path in _get_all_children_db."""
+
+    def _make_client(self, side_effect) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.has_couchdb = True
+        client.find_docs.side_effect = side_effect
+        return client
+
+    def test_bfs_calls_find_docs_per_depth_level(self):
+        """3 find_docs calls for a tree with 3 BFS levels: root→[c1,c2], c1→[g1], c1_g1→[]."""
+        child1 = {"_id": "c1", "title": "Child1", "type": "project"}
+        child2 = {"_id": "c2", "title": "Child2", "type": "category"}
+        grandchild1 = {"_id": "g1", "title": "Grandchild1", "type": "project"}
+
+        def side_effect(selector=None, limit=None):
+            frontier = selector["parentId"]["$in"]
+            if "root" in frontier:
+                return {"docs": [child1, child2]}
+            if "c1" in frontier or "c2" in frontier:
+                return {"docs": [grandchild1]}
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        result = _get_all_children_db(client, "root")
+
+        assert client.find_docs.call_count == 3
+        assert {d["_id"] for d in result} == {"c1", "c2", "g1"}
+
+    def test_selector_includes_deleted_filter(self):
+        def side_effect(selector=None, limit=None):
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        _get_all_children_db(client, "root")
+
+        selector = client.find_docs.call_args.kwargs["selector"]
+        assert selector["deletedAt"] == {"$exists": False}
+
+    def test_seen_ids_prevents_duplicates(self):
+        """A doc returned twice by the mock appears only once in the result."""
+        child1 = {"_id": "c1", "title": "Child1", "type": "project"}
+        grandchild1 = {"_id": "g1", "title": "Grandchild"}
+
+        def side_effect(selector=None, limit=None):
+            frontier = selector["parentId"]["$in"]
+            if "root" in frontier:
+                return {"docs": [child1]}
+            if "c1" in frontier:
+                return {"docs": [grandchild1, grandchild1]}  # duplicate
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        result = _get_all_children_db(client, "root")
+
+        ids = [d["_id"] for d in result]
+        assert ids.count("g1") == 1
 
 
 if __name__ == "__main__":

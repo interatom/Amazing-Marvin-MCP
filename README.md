@@ -407,6 +407,35 @@ export AMAZING_MARVIN_API_KEY="your-api-key-here"
 AMAZING_MARVIN_API_KEY=your-api-key-here
 ```
 
+### 🗄️ Optional: Direct database access (advanced)
+
+Amazing Marvin exposes its underlying CouchDB/Cloudant database for direct access. When configured, this unlocks a `query_docs` tool with rich filtering and field projection, and makes several existing tools faster by replacing multiple REST calls with a single database query.
+
+**Where to get credentials:** open [https://app.amazingmarvin.com/pre?api](https://app.amazingmarvin.com/pre?api) or the in-app **Strategies → Sync & API** panel. Both surfaces show four values labeled Sync Server, Sync Database, Sync User, Sync Password. Map them like this:
+
+| Marvin field      | Env var                      |
+|-------------------|------------------------------|
+| Sync Server (URL) | `AMAZING_MARVIN_DB_URI`      |
+| Sync Database     | `AMAZING_MARVIN_DB_NAME`     |
+| Sync User         | `AMAZING_MARVIN_DB_USER`     |
+| Sync Password     | `AMAZING_MARVIN_DB_PASSWORD` |
+
+All four are required — if any is missing, the DB-backed tools are silently unavailable and behavior falls back to REST.
+
+Add to your environment or `.env` file:
+```env
+AMAZING_MARVIN_DB_URI=https://...
+AMAZING_MARVIN_DB_NAME=<your-db-name>
+AMAZING_MARVIN_DB_USER=<your-db-user>
+AMAZING_MARVIN_DB_PASSWORD=<your-db-password>
+```
+
+**Note:** Direct database access is read-only in this integration. All writes continue through the REST API, matching Marvin's own guidance.
+
+**Rate limits apply:** Marvin's guidance is ≤1 query per 3 seconds and ≤1440 queries per day for both REST and direct DB access. Avoid tight loops.
+
+**Performance note:** On large accounts, queries may benefit from Mango indexes. Marvin's Sync credentials don't have permission to create them (they're read-only). Defaults work for typical account sizes; if you self-host CouchDB or have elevated credentials, create indexes manually via your Cloudant dashboard.
+
 ### 🧪 Testing
 ```bash
 pytest tests/ -v
