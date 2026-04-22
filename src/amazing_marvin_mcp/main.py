@@ -27,6 +27,7 @@ from .projects import (
 )
 from .response_models import StandardResponse
 from .tasks import (
+    apply_fields,
     batch_create_tasks as batch_create_tasks_impl,
 )
 from .tasks import (
@@ -47,18 +48,22 @@ mcp: FastMCP = FastMCP(name="amazing-marvin-mcp")
 
 
 @mcp.tool()
-async def get_tasks(debug: bool = False) -> StandardResponse:
+async def get_tasks(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
     """Get today's scheduled tasks only.
 
     Use when you need only today's scheduled items without overdue or completed items.
     For comprehensive daily overview, use get_daily_productivity_overview() instead.
     For all tasks across projects, use get_all_tasks().
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
     """
     start_time = time.time()
     try:
         api_client = create_api_client()
         today = DateUtils.get_today()
         raw_tasks = api_client.get_tasks(date=today)
+        raw_tasks = apply_fields(raw_tasks, fields)
 
         return create_task_response(
             api_client=api_client,
@@ -75,16 +80,20 @@ async def get_tasks(debug: bool = False) -> StandardResponse:
 
 
 @mcp.tool()
-async def get_projects(debug: bool = False) -> StandardResponse:
+async def get_projects(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
     """Get all projects (categories with type 'project').
 
     Use when you need project list for organization or project selection.
     For detailed project analysis, use get_project_overview(project_id).
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
     """
     start_time = time.time()
     try:
         api_client = create_api_client()
         projects = api_client.get_projects()
+        projects = apply_fields(projects, fields)
 
         return create_simple_response(
             data=projects,
@@ -100,12 +109,17 @@ async def get_projects(debug: bool = False) -> StandardResponse:
 
 
 @mcp.tool()
-async def get_categories(debug: bool = False) -> StandardResponse:
-    """Get categories from Amazing Marvin"""
+async def get_categories(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
+    """Get categories from Amazing Marvin.
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
+    """
     start_time = time.time()
     try:
         api_client = create_api_client()
         categories = api_client.get_categories()
+        categories = apply_fields(categories, fields)
 
         return create_simple_response(
             data=categories,
@@ -121,16 +135,20 @@ async def get_categories(debug: bool = False) -> StandardResponse:
 
 
 @mcp.tool()
-async def get_due_items(debug: bool = False) -> StandardResponse:
+async def get_due_items(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
     """Get overdue and due tasks only (past due date).
 
     Use when you need to focus specifically on urgent/overdue items.
     For complete daily view including today's tasks, use get_daily_productivity_overview().
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
     """
     start_time = time.time()
     try:
         api_client = create_api_client()
         due_items = api_client.get_due_items()
+        due_items = apply_fields(due_items, fields)
 
         return create_simple_response(
             data={"due_items": due_items},
@@ -147,7 +165,7 @@ async def get_due_items(debug: bool = False) -> StandardResponse:
 
 @mcp.tool()
 async def get_child_tasks(
-    parent_id: str, recursive: bool = False, debug: bool = False
+    parent_id: str, recursive: bool = False, fields: list[str] | None = None, debug: bool = False
 ) -> StandardResponse:
     """Get child tasks of a specific parent task or project (experimental).
 
@@ -157,6 +175,7 @@ async def get_child_tasks(
     Args:
         parent_id: ID of the parent task or project
         recursive: If True, recursively get all descendants (can be expensive)
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
 
     Note: This is an experimental endpoint and may not work for all parent types.
     """
@@ -167,7 +186,16 @@ async def get_child_tasks(
             result = get_child_tasks_recursive(api_client, parent_id)
             api_calls = result.get("api_calls_made", 3)  # Estimate for recursive calls
         else:
-            children = api_client.get_children(parent_id)
+            if api_client.has_couchdb:
+                children = api_client.find_docs(
+                    selector={
+                        "parentId": parent_id,
+                        "deletedAt": {"$exists": False},
+                    },
+                    limit=10000,
+                ).get("docs", [])
+            else:
+                children = api_client.get_children(parent_id)
             # Categorize non-recursive results for consistency
             tasks = [
                 {**item, "type": "task"} if "type" not in item else item
@@ -190,6 +218,12 @@ async def get_child_tasks(
                 "recursive": False,
             }
             api_calls = 1
+
+        if fields:
+            result["tasks"] = apply_fields(result.get("tasks", []), fields)
+            result["projects"] = apply_fields(result.get("projects", []), fields)
+            result["categories"] = apply_fields(result.get("categories", []), fields)
+            result["all_children"] = apply_fields(result.get("all_children", []), fields)
 
         return create_simple_response(
             data=result,
@@ -221,6 +255,8 @@ async def get_all_tasks(
                 If None, all fields are returned. Unknown fields are silently ignored.
 
     Note: This is a heavy operation that recursively searches all projects.
+    For filter negation, existence filters (has_due_date, has_note), ranges, sorting,
+    or raw-doc fields, use `query_docs` (requires DB credentials).
     """
     start_time = time.time()
     try:
@@ -446,12 +482,17 @@ async def update_task(
 
 
 @mcp.tool()
-async def get_labels(debug: bool = False) -> StandardResponse:
-    """Get all labels from Amazing Marvin"""
+async def get_labels(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
+    """Get all labels from Amazing Marvin.
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
+    """
     start_time = time.time()
     try:
         api_client = create_api_client()
         labels = api_client.get_labels()
+        labels = apply_fields(labels, fields)
 
         return create_simple_response(
             data={"labels": labels},
@@ -467,12 +508,17 @@ async def get_labels(debug: bool = False) -> StandardResponse:
 
 
 @mcp.tool()
-async def get_goals(debug: bool = False) -> StandardResponse:
-    """Get all goals from Amazing Marvin"""
+async def get_goals(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
+    """Get all goals from Amazing Marvin.
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
+    """
     start_time = time.time()
     try:
         api_client = create_api_client()
         goals = api_client.get_goals()
+        goals = apply_fields(goals, fields)
 
         return create_simple_response(
             data={"goals": goals},
@@ -975,17 +1021,25 @@ async def time_tracking_summary(debug: bool = False) -> StandardResponse:
 
 
 @mcp.tool()
-async def get_completed_tasks(debug: bool = False) -> StandardResponse:
+async def get_completed_tasks(fields: list[str] | None = None, debug: bool = False) -> StandardResponse:
     """Get completed tasks from past 7 days with efficient date filtering and categorization.
 
     Use when you need to review recent accomplishments or productivity patterns.
     For specific date, use get_completed_tasks_for_date(date).
     For custom time ranges, use get_productivity_summary_for_time_range().
+
+    Args:
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
     """
     start_time = time.time()
     try:
         api_client = create_api_client()
         result = get_completed_tasks_impl(api_client)
+        if fields:
+            for key in ("completed_tasks", "today_completed", "yesterday_completed",
+                        "older_completed", "all_completed_tasks"):
+                if key in result and isinstance(result[key], list):
+                    result[key] = apply_fields(result[key], fields)
 
         return create_simple_response(
             data=result,
@@ -1049,17 +1103,19 @@ async def get_productivity_summary_for_time_range(
 
 @mcp.tool()
 async def get_completed_tasks_for_date(
-    date: str, debug: bool = False
+    date: str, fields: list[str] | None = None, debug: bool = False
 ) -> StandardResponse:
     """Get completed tasks for a specific date using efficient API filtering
 
     Args:
         date: Date in YYYY-MM-DD format (e.g., '2025-06-13')
+        fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
     """
     start_time = time.time()
     try:
         api_client = create_api_client()
         completed_items = api_client.get_done_items(date=date)
+        completed_items = apply_fields(completed_items, fields)
 
         # Group by project for better organization
         by_project: dict[str, list[dict[str, Any]]] = {}
@@ -1377,7 +1433,6 @@ async def unclaim_reward_points(
     except Exception as e:
         logger.exception("Failed to unclaim reward points for task %s", item_id)
         return create_error_response(e, "/unclaimRewardPoints", debug, start_time)
-
 
 
 def _couchdb_configured() -> bool:
@@ -1753,7 +1808,6 @@ if _couchdb_configured():
         except Exception as e:
             logger.exception("describe_doc_type failed")
             return create_error_response(e, "describe_doc_type", False, start_time)
-
 
 
 def start():

@@ -10,6 +10,102 @@ from .date_utils import DateUtils
 logger = logging.getLogger(__name__)
 
 
+def apply_fields(items: list[dict], fields: list[str] | None) -> list[dict]:
+    """Project each dict in items down to the requested fields. _id is always kept."""
+    if not fields:
+        return items
+    keep = set(fields) | {"_id"}
+    return [{k: item[k] for k in keep if k in item} for item in items]
+
+
+def _get_all_tasks_db(
+    api_client: MarvinAPIClient,
+    label: str | None,
+    fields: list[str] | None,
+) -> dict[str, Any]:
+    """CouchDB fast-path for get_all_tasks_impl — one Mango query."""
+    api_calls = 0
+    label_id: str | None = None
+
+    if label:
+        labels = api_client.get_labels()
+        api_calls += 1
+        for lbl in labels:
+            if lbl.get("title", "").lower() == label.lower():
+                label_id = lbl.get("_id")
+                break
+        if label_id is None:
+            return {
+                "tasks": [],
+                "task_count": 0,
+                "filter_applied": True,
+                "label_filter": label,
+                "source": "CouchDB _find",
+                "api_calls_made": api_calls,
+            }
+
+    selector: dict[str, Any] = {
+        "$and": [
+            {"db": "Tasks"},
+            {"deletedAt": {"$exists": False}},
+            {"done": {"$ne": True}},
+        ]
+    }
+    if label_id:
+        selector["$and"].append({"labelIds": {"$elemMatch": {"$in": [label_id]}}})
+
+    result = api_client.find_docs(selector=selector, fields=fields, limit=10000)
+    api_calls += 1
+    docs: list[dict] = result.get("docs", [])
+
+    # Post-filter: Tasks collection also stores project/category items
+    tasks = [d for d in docs if d.get("type") not in ("project", "category")]
+
+    # No-op when fields is non-empty (Mango already projected); harmless when None.
+    tasks = apply_fields(tasks, fields)
+
+    return {
+        "tasks": tasks,
+        "task_count": len(tasks),
+        "filter_applied": label is not None,
+        "label_filter": label,
+        "source": "CouchDB _find",
+        "api_calls_made": api_calls,
+    }
+
+
+def _get_all_children_db(
+    api_client: MarvinAPIClient, parent_id: str
+) -> list[dict[str, Any]]:
+    """BFS via CouchDB — O(depth) Mango queries instead of O(nodes) REST calls."""
+    all_docs: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    frontier = [parent_id]
+
+    while frontier:
+        result = api_client.find_docs(
+            selector={
+                "parentId": {"$in": frontier},
+                "deletedAt": {"$exists": False},
+            },
+            limit=10000,
+        )
+        docs = result.get("docs", [])
+
+        next_frontier: list[str] = []
+        for doc in docs:
+            doc_id = doc.get("_id")
+            if doc_id and doc_id not in seen_ids:
+                all_docs.append(doc)
+                seen_ids.add(doc_id)
+                if doc.get("type") in ("project", "category"):
+                    next_frontier.append(doc_id)
+
+        frontier = next_frontier
+
+    return all_docs
+
+
 def get_daily_focus(api_client: MarvinAPIClient) -> dict[str, Any]:
     """Get today's focus items - due items, scheduled tasks, and completed tasks."""
     today = DateUtils.get_today()
@@ -163,7 +259,10 @@ def get_child_tasks_recursive(
     api_client: MarvinAPIClient, parent_id: str
 ) -> dict[str, Any]:
     """Get child tasks recursively with comprehensive information."""
-    all_children = _get_all_children_recursive(api_client, parent_id)
+    if api_client.has_couchdb:
+        all_children = _get_all_children_db(api_client, parent_id)
+    else:
+        all_children = _get_all_children_recursive(api_client, parent_id)
 
     # Categorize children by type
     tasks = [
@@ -220,7 +319,15 @@ def get_all_tasks_impl(
     label: str | None = None,
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Get all tasks and projects with optional label filtering, using recursive traversal."""
+    """Get all tasks and projects with optional label filtering, using recursive traversal.
+
+    When DB credentials are configured, uses a single CouchDB query instead of
+    recursive REST traversal. May include tasks invisible to the REST-only path
+    (not scoped to today/due/projects — returns all non-done, non-deleted tasks).
+    """
+    if api_client.has_couchdb:
+        return _get_all_tasks_db(api_client, label, fields)
+
     try:
         # Get all top-level items
         today = DateUtils.get_today()
@@ -264,8 +371,7 @@ def get_all_tasks_impl(
             if item.get("type") not in ["project", "category"]
         ]
 
-        if fields:
-            tasks = [{k: t[k] for k in fields if k in t} for t in tasks]
+        tasks = apply_fields(tasks, fields)
 
         return {
             "tasks": tasks,

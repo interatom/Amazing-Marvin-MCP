@@ -1,7 +1,7 @@
 """Analytics functions for Amazing Marvin MCP."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 from .api import MarvinAPIClient
@@ -9,6 +9,109 @@ from .cache import done_items_cache
 from .date_utils import DateUtils
 
 logger = logging.getLogger(__name__)
+
+
+def _get_daily_productivity_db(
+    api_client: MarvinAPIClient, today: str
+) -> dict[str, Any]:
+    """CouchDB fast-path: 1 Mango query replaces REST calls 1-3."""
+    today_dt = datetime.strptime(today, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    today_start_ms = int(today_dt.timestamp() * 1000)
+    today_end_ms = int((today_dt + timedelta(days=1)).timestamp() * 1000) - 1
+
+    selector: dict[str, Any] = {
+        "db": "Tasks",
+        "deletedAt": {"$exists": False},
+        "$or": [
+            {"day": today},
+            {"dueDate": {"$lte": today}, "done": {"$ne": True}},
+            {"done": True, "doneAt": {"$gte": today_start_ms, "$lte": today_end_ms}},
+        ],
+    }
+
+    result = api_client.find_docs(selector=selector, limit=10000)
+    docs = result.get("docs", [])
+
+    today_items: list[dict] = []
+    due_items: list[dict] = []
+    today_completed: list[dict] = []
+
+    for doc in docs:
+        done = doc.get("done") == True  # noqa: E712 — avoids truthy match on 1
+        done_at = doc.get("doneAt")
+
+        if done and done_at is not None and today_start_ms <= done_at <= today_end_ms:
+            today_completed.append(doc)
+
+        if not done and doc.get("day") == today:
+            today_items.append(doc)
+
+        due_date = doc.get("dueDate")
+        if not done and due_date and due_date <= today:
+            due_items.append(doc)
+
+    # Serial REST calls for the two remaining slices
+    projects = api_client.get_projects()
+    goals = api_client.get_goals()
+
+    # Combine pending items, deduplicating (same logic as REST path)
+    all_pending_items: list[dict] = []
+    item_ids: set[str] = set()
+    for item in today_items + due_items:
+        item_id = item.get("_id")
+        if item_id and item_id not in item_ids:
+            all_pending_items.append(item)
+            item_ids.add(item_id)
+
+    high_priority = [i for i in all_pending_items if i.get("priority") == "high"]
+    pending_projects = [i for i in all_pending_items if i.get("type") == "project"]
+    pending_tasks = [i for i in all_pending_items if i.get("type") != "project"]
+
+    total_due = len(due_items)
+    total_scheduled = len(today_items)
+    total_completed = len(today_completed)
+    total_pending = len(all_pending_items)
+
+    heavy_day_threshold = 5
+    suggestions: list[str] = []
+    if total_due > 0:
+        suggestions.append(f"Focus on {total_due} overdue items first")
+    if total_scheduled > heavy_day_threshold:
+        suggestions.append("Consider rescheduling some tasks - you have a heavy day")
+    if total_scheduled == 0 and total_due == 0:
+        suggestions.append("Great! No urgent tasks today - time to work on your goals")
+    if total_completed > 0:
+        suggestions.append(f"Good progress! You've completed {total_completed} items today")
+
+    productivity_note = (
+        f"You've completed {total_completed} items today!"
+        if total_completed > 0
+        else "No completed items yet today - keep going!"
+    )
+
+    return {
+        "date": today,
+        "total_focus_items": total_pending + total_completed,
+        "pending_items": total_pending,
+        "completed_today": total_completed,
+        "overdue_items": total_due,
+        "scheduled_today": total_scheduled,
+        "tasks": pending_tasks,
+        "projects": pending_projects,
+        "high_priority_items": high_priority,
+        "completed_items": today_completed,
+        "due_items": due_items[:5],
+        "today_items": today_items[:5],
+        "all_pending_items": all_pending_items,
+        "active_projects": len(projects),
+        "active_goals": len(goals),
+        "goals": goals,
+        "suggestions": suggestions,
+        "productivity_note": productivity_note,
+        "quick_summary": f"{total_due} due, {total_scheduled} scheduled, {total_completed} completed",
+        "api_calls_made": 3,
+        "efficiency_note": "1 CouchDB query + 2 REST calls (down from 5 REST calls)",
+    }
 
 
 def get_productivity_summary(api_client: MarvinAPIClient) -> dict[str, Any]:
@@ -255,11 +358,14 @@ def get_daily_productivity_overview(api_client: MarvinAPIClient) -> dict[str, An
     """Get comprehensive daily productivity overview combining focus, planning, and progress.
 
     Consolidates functionality from get_productivity_summary, quick_daily_planning, and get_daily_focus
-    to reduce API calls from 11 to 5 for better performance.
+    to reduce API calls from 11 to 5 for better performance (3 when DB credentials are configured).
 
     Returns today's tasks, overdue items, completed items, planning insights, and productivity metrics.
     """
     today = DateUtils.get_today()
+
+    if api_client.has_couchdb:
+        return _get_daily_productivity_db(api_client, today)
 
     # Make efficient API calls (5 total instead of 11)
     # Pass explicit local date so the Marvin API (which defaults to UTC)
