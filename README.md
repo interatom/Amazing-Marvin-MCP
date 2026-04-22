@@ -358,13 +358,15 @@ Yes! The MCP can find and display completed tasks in several ways:
 <details>
 <summary><strong>What can't the MCP do?</strong></summary>
 
-**🚫 Cannot Delete or Remove:**
-- ❌ Delete tasks (requires special API permissions)
-- ❌ Delete projects or categories
+**🚫 Cannot Delete or Remove (without full-access token):**
+- ❌ Delete tasks — hidden unless `AMAZING_MARVIN_FULL_ACCESS_TOKEN` is set
+- ❌ Delete projects or categories — same requirement
 - ❌ Remove labels or goals
 - ❌ Clear time tracking history
 
-**📝 Cannot Edit:**
+Setting `AMAZING_MARVIN_FULL_ACCESS_TOKEN` unlocks: `delete_document`, `get_document`, `update_document`, `update_task`.
+
+**📝 Cannot Edit (without full-access token):**
 - ❌ Modify existing task content (title, notes, due dates)
 - ❌ Move tasks between projects
 - ❌ Change task priorities or labels
@@ -405,6 +407,17 @@ export AMAZING_MARVIN_API_KEY="your-api-key-here"
 **Option B: Create a `.env` file**
 ```env
 AMAZING_MARVIN_API_KEY=your-api-key-here
+```
+
+### 🔐 Optional: Full-access token
+
+The standard API key covers most read operations and basic writes. A **full-access token** is required for the four mutative document tools: `get_document`, `update_document`, `delete_document`, and `update_task`. Without it these tools are simply absent from the MCP tool list.
+
+**Where to get it:** open [https://app.amazingmarvin.com/pre?api](https://app.amazingmarvin.com/pre?api) or the in-app **Strategies → Sync & API** panel. Copy the value labeled **Full Access Token**.
+
+Add to your environment or `.env` file:
+```env
+AMAZING_MARVIN_FULL_ACCESS_TOKEN=your-full-access-token-here
 ```
 
 ### 🗄️ Optional: Direct database access (advanced)

@@ -280,7 +280,6 @@ async def get_all_tasks(
         return create_error_response(e, "/categories + /children", debug, start_time)
 
 
-@mcp.tool()
 async def get_document(item_id: str, debug: bool = False) -> StandardResponse:
     """Read any Marvin document by ID (requires AMAZING_MARVIN_FULL_ACCESS_TOKEN).
 
@@ -308,7 +307,6 @@ async def get_document(item_id: str, debug: bool = False) -> StandardResponse:
         return create_error_response(e, "/doc", debug, start_time)
 
 
-@mcp.tool()
 async def update_document(
     item_id: str, setters: dict[str, Any], debug: bool = False
 ) -> StandardResponse:
@@ -342,7 +340,6 @@ async def update_document(
         return create_error_response(e, "/doc/update", debug, start_time)
 
 
-@mcp.tool()
 async def delete_document(item_id: str, debug: bool = False) -> StandardResponse:
     """Permanently delete an Amazing Marvin task or empty project/category.
 
@@ -412,7 +409,6 @@ async def delete_document(item_id: str, debug: bool = False) -> StandardResponse
         return create_error_response(e, "/doc/delete", debug, start_time)
 
 
-@mcp.tool()
 async def update_task(
     item_id: str,
     title: str | None = None,
@@ -1433,6 +1429,21 @@ async def unclaim_reward_points(
     except Exception as e:
         logger.exception("Failed to unclaim reward points for task %s", item_id)
         return create_error_response(e, "/unclaimRewardPoints", debug, start_time)
+
+
+def _full_access_configured() -> bool:
+    try:
+        from .config import get_settings
+        return bool(get_settings().amazing_marvin_full_access_token)
+    except Exception:
+        return False
+
+
+if _full_access_configured():
+    get_document = mcp.tool()(get_document)
+    update_document = mcp.tool()(update_document)
+    delete_document = mcp.tool()(delete_document)
+    update_task = mcp.tool()(update_task)
 
 
 def _couchdb_configured() -> bool:
