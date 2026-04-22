@@ -19,6 +19,14 @@ class Settings(BaseSettings):
         default=None, env="AMAZING_MARVIN_FULL_ACCESS_TOKEN"
     )
 
+    # CouchDB / Cloudant direct-access settings (optional — enables DB fast-paths)
+    amazing_marvin_db_uri: str | None = Field(default=None, env="AMAZING_MARVIN_DB_URI")
+    amazing_marvin_db_name: str | None = Field(default=None, env="AMAZING_MARVIN_DB_NAME")
+    amazing_marvin_db_user: str | None = Field(default=None, env="AMAZING_MARVIN_DB_USER")
+    amazing_marvin_db_password: str | None = Field(
+        default=None, env="AMAZING_MARVIN_DB_PASSWORD"
+    )
+
     # Server settings
     port: int = Field(default=3000, env="PORT")
     host: str = Field(default="0.0.0.0", env="HOST")

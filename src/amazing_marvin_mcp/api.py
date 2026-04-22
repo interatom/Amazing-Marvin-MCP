@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 import requests
@@ -14,20 +15,25 @@ def create_api_client() -> "MarvinAPIClient":
     return MarvinAPIClient(
         api_key=settings.amazing_marvin_api_key,
         full_access_token=settings.amazing_marvin_full_access_token,
+        db_uri=settings.amazing_marvin_db_uri,
+        db_name=settings.amazing_marvin_db_name,
+        db_user=settings.amazing_marvin_db_user,
+        db_password=settings.amazing_marvin_db_password,
     )
 
 
 class MarvinAPIClient:
     """API client for Amazing Marvin"""
 
-    def __init__(self, api_key: str, full_access_token: str | None = None):
-        """
-        Initialize the API client with the API key
-
-        Args:
-            api_key: Amazing Marvin API key
-            full_access_token: Optional full-access token for CRUD operations
-        """
+    def __init__(
+        self,
+        api_key: str,
+        full_access_token: str | None = None,
+        db_uri: str | None = None,
+        db_name: str | None = None,
+        db_user: str | None = None,
+        db_password: str | None = None,
+    ):
         self.api_key = api_key
         self.base_url = "https://serv.amazingmarvin.com/api"  # Removed v1 from URL
         self.headers = {"X-API-Token": api_key}
@@ -35,10 +41,67 @@ class MarvinAPIClient:
         self.full_access_headers: dict[str, str] | None = (
             {"X-Full-Access-Token": full_access_token} if full_access_token else None
         )
+        self._db_uri = db_uri.rstrip("/") if db_uri else None
+        self._db_name = db_name
+        self._db_user = db_user
+        self._db_password = db_password
+        self._last_couchdb_query_time: float | None = None
 
     @property
     def has_full_access(self) -> bool:
         return bool(self.full_access_token)
+
+    @property
+    def has_couchdb(self) -> bool:
+        return all([self._db_uri, self._db_name, self._db_user, self._db_password])
+
+    def find_docs(
+        self,
+        selector: dict,
+        fields: list[str] | None = None,
+        limit: int = 500,
+        sort: list[dict] | None = None,
+        bookmark: str | None = None,
+    ) -> dict:
+        """POST a Mango _find query to CouchDB/Cloudant.
+
+        Rate limits: Marvin guidance is ≤1 query per 3 seconds and ≤1440/day.
+        Raises ValueError if DB credentials are not configured.
+        Returns the full {"docs": [...], "bookmark": "..."} envelope.
+        """
+        if not self.has_couchdb:
+            raise ValueError(
+                "CouchDB credentials not configured. "
+                "Set AMAZING_MARVIN_DB_URI, AMAZING_MARVIN_DB_NAME, "
+                "AMAZING_MARVIN_DB_USER, and AMAZING_MARVIN_DB_PASSWORD."
+            )
+
+        now = time.monotonic()
+        if self._last_couchdb_query_time is not None:
+            elapsed = now - self._last_couchdb_query_time
+            if elapsed < 1.0:
+                logger.warning(
+                    "Two CouchDB queries within %.2fs — Marvin guidance is ≤1/3s (≤1440/day).",
+                    elapsed,
+                )
+        self._last_couchdb_query_time = now
+
+        url = f"{self._db_uri}/{self._db_name}/_find"
+        body: dict[str, Any] = {"selector": selector, "limit": limit}
+        if fields is not None:
+            body["fields"] = sorted(set(fields) | {"_id"})
+        if sort is not None:
+            body["sort"] = sort
+        if bookmark is not None:
+            body["bookmark"] = bookmark
+
+        try:
+            response = requests.post(url, json=body, auth=(self._db_user, self._db_password))
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError:
+            logger.exception("CouchDB _find error at %s", url)
+            raise
 
     def _make_request(
         self,
