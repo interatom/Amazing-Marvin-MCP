@@ -1379,6 +1379,383 @@ async def unclaim_reward_points(
         return create_error_response(e, "/unclaimRewardPoints", debug, start_time)
 
 
+
+def _couchdb_configured() -> bool:
+    try:
+        from .config import get_settings
+        s = get_settings()
+        return all([
+            s.amazing_marvin_db_uri,
+            s.amazing_marvin_db_name,
+            s.amazing_marvin_db_user,
+            s.amazing_marvin_db_password,
+        ])
+    except Exception:
+        return False
+
+
+if _couchdb_configured():
+    from typing import Annotated, Literal
+
+    from pydantic import Field as PydanticField
+
+    from .doc_types import DOC_TYPE_SCHEMAS, DocType
+    from .query import execute_query_docs
+
+    @mcp.tool()
+    async def query_docs(
+        doc_type: Annotated[
+            DocType,
+            PydanticField(
+                description=(
+                    "Which CouchDB collection to query. 'Tasks' for tasks, "
+                    "'Categories' for both projects (type='project') and plain "
+                    "categories, 'RecurringTasks' for templates, 'Goals', "
+                    "'Habits', 'Rewards', etc. Use describe_doc_type to see "
+                    "fields and applicable filters for any type."
+                )
+            ),
+        ] = "Tasks",
+        fields: Annotated[
+            list[str] | None,
+            PydanticField(
+                description=(
+                    "Project from the raw CouchDB document. Unlocks fields that "
+                    "REST endpoints strip — e.g. 'note' on categories, "
+                    "'timeEstimate', 'backburner', 'fieldUpdates'. '_id' is always "
+                    "included even if omitted."
+                )
+            ),
+        ] = None,
+        labels: Annotated[
+            list[str] | None,
+            PydanticField(
+                description=(
+                    "Any-of label name filter (case-insensitive). Returns docs "
+                    "carrying at least one of the listed labels. Names are resolved "
+                    "to IDs via one /labels REST call."
+                )
+            ),
+        ] = None,
+        exclude_labels: Annotated[
+            list[str] | None,
+            PydanticField(
+                description=(
+                    "Exclude docs carrying any of these label names. Can be combined "
+                    "with 'labels' for positive + negative filtering in one call."
+                )
+            ),
+        ] = None,
+        include_done: Annotated[
+            bool,
+            PydanticField(
+                description=(
+                    "Include completed docs (done=true). Default False — only "
+                    "active/incomplete docs are returned. Applies to Tasks and "
+                    "Categories."
+                )
+            ),
+        ] = False,
+        include_deleted: Annotated[
+            bool,
+            PydanticField(
+                description=(
+                    "Include soft-deleted docs (those with 'deletedAt' set). REST "
+                    "endpoints auto-strip these; CouchDB does not. Default False."
+                )
+            ),
+        ] = False,
+        has_due_date: Annotated[
+            bool | None,
+            PydanticField(
+                description=(
+                    "True = only docs with a non-empty dueDate; "
+                    "False = only docs without one; None = no filter."
+                )
+            ),
+        ] = None,
+        has_note: Annotated[
+            bool | None,
+            PydanticField(
+                description=(
+                    "True = only docs with a non-empty note field; "
+                    "False = only docs without one; None = no filter."
+                )
+            ),
+        ] = None,
+        has_time_estimate: Annotated[
+            bool | None,
+            PydanticField(
+                description=(
+                    "True = only docs with a timeEstimate set; "
+                    "False = only docs without one; None = no filter."
+                )
+            ),
+        ] = None,
+        has_scheduled_day: Annotated[
+            bool | None,
+            PydanticField(
+                description=(
+                    "True = only docs with a scheduled day assigned (day field "
+                    "present and not 'unassigned'); False = only unscheduled docs; "
+                    "None = no filter."
+                )
+            ),
+        ] = None,
+        contains: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "Case-insensitive substring search, OR-matched across the "
+                    "'title' and 'note' fields."
+                )
+            ),
+        ] = None,
+        due: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "Exact dueDate match (YYYY-MM-DD). "
+                    "Mutually exclusive with due_before/due_after."
+                )
+            ),
+        ] = None,
+        due_before: Annotated[
+            str | None,
+            PydanticField(description="Upper bound on dueDate (YYYY-MM-DD, inclusive)."),
+        ] = None,
+        due_after: Annotated[
+            str | None,
+            PydanticField(description="Lower bound on dueDate (YYYY-MM-DD, inclusive)."),
+        ] = None,
+        scheduled: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "Exact day field match (YYYY-MM-DD). "
+                    "Mutually exclusive with scheduled_before/scheduled_after."
+                )
+            ),
+        ] = None,
+        scheduled_before: Annotated[
+            str | None,
+            PydanticField(description="Upper bound on day field (YYYY-MM-DD, inclusive)."),
+        ] = None,
+        scheduled_after: Annotated[
+            str | None,
+            PydanticField(description="Lower bound on day field (YYYY-MM-DD, inclusive)."),
+        ] = None,
+        done_after: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "YYYY-MM-DD lower bound on completion date. Mapped to 'doneAt' "
+                    "(epoch ms, start of day UTC) for Tasks; 'doneDate' (string) "
+                    "for Categories/projects."
+                )
+            ),
+        ] = None,
+        done_before: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "YYYY-MM-DD upper bound on completion date. Mapped to 'doneAt' "
+                    "(epoch ms, end of day UTC) for Tasks; 'doneDate' (string) "
+                    "for Categories/projects."
+                )
+            ),
+        ] = None,
+        parent_id: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "Filter by parent container ID. Special values: "
+                    "'unassigned' = inbox items (no parent), "
+                    "'root' = top-level items."
+                )
+            ),
+        ] = None,
+        project_type: Annotated[
+            Literal["project", "category"] | None,
+            PydanticField(
+                description=(
+                    "Filter Categories by sub-type: 'project' returns only projects "
+                    "(type='project'); 'category' returns only plain categories. "
+                    "Only valid for doc_type='Categories'."
+                )
+            ),
+        ] = None,
+        is_starred: Annotated[
+            bool | None,
+            PydanticField(
+                description=(
+                    "Match any truthy starring. Marvin stores isStarred as Boolean "
+                    "OR Number (1/2/3 for priority tiers). True matches all starred; "
+                    "to distinguish tiers, include 'isStarred' in fields and inspect "
+                    "client-side. Tasks only."
+                )
+            ),
+        ] = None,
+        is_frogged: Annotated[
+            bool | None,
+            PydanticField(
+                description=(
+                    "Match any truthy frog. Marvin stores isFrogged as Boolean OR "
+                    "Number (1/2/3). True matches all frogged docs. Tasks only."
+                )
+            ),
+        ] = None,
+        priority: Annotated[
+            Literal["low", "mid", "high"] | None,
+            PydanticField(
+                description=(
+                    "Priority level — 'low', 'mid', or 'high'. Note: 'mid', not "
+                    "'medium'. Categories/projects only; for tasks use is_starred."
+                )
+            ),
+        ] = None,
+        sort_by: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "Field name to sort results by (e.g. 'dueDate', 'doneAt', "
+                    "'title'). Requires a matching Mango index; missing index "
+                    "triggers a full scan with a CouchDB warning."
+                )
+            ),
+        ] = None,
+        sort_desc: Annotated[
+            bool,
+            PydanticField(description="Sort descending. Default False = ascending."),
+        ] = False,
+        limit: Annotated[
+            int,
+            PydanticField(description="Maximum docs to return. Default 500."),
+        ] = 500,
+        bookmark: Annotated[
+            str | None,
+            PydanticField(
+                description=(
+                    "Pagination continuation token from a previous truncated result. "
+                    "Pass the bookmark from response.data.bookmark to fetch the next page."
+                )
+            ),
+        ] = None,
+        debug: bool = False,
+    ) -> StandardResponse:
+        """Direct CouchDB query — fast filtering, field projection from raw docs,
+        and access to fields the REST API omits (e.g. `note` on categories).
+
+        Requires DB credentials (AMAZING_MARVIN_DB_*).
+        Use for: filter negation, multi-label filters, existence filters
+        (has_due_date, has_note), ranges on due/scheduled/doneAt, sorting,
+        raw-doc fields (note on categories), or non-Task doc types
+        (Goals, Habits, Rewards). For simple label-only or unfiltered task lists,
+        prefer get_all_tasks.
+
+        Rate limits: Marvin guidance is ≤1 query per 3 seconds and ≤1440/day for
+        BOTH REST and CouchDB. Avoid tight loops.
+
+        Examples:
+            All category notes (shortcoming #2):
+                query_docs(doc_type="Categories", fields=["_id","title","note"])
+            Inbox tasks:
+                query_docs(parent_id="unassigned")
+            Tasks with label "urgent" excluding "waiting":
+                query_docs(labels=["urgent"], exclude_labels=["waiting"])
+            Triage — due but no time estimate:
+                query_docs(has_due_date=True, has_time_estimate=False)
+            Recently completed:
+                query_docs(include_done=True, done_after="2026-04-14",
+                           sort_by="doneAt", sort_desc=True, limit=50)
+            Active projects:
+                query_docs(doc_type="Categories", project_type="project")
+            Recurring templates:
+                query_docs(doc_type="RecurringTasks")
+        """
+        api_client = create_api_client()
+        return await execute_query_docs(
+            api_client=api_client,
+            doc_type=doc_type,
+            fields=fields,
+            labels=labels,
+            exclude_labels=exclude_labels,
+            include_done=include_done,
+            include_deleted=include_deleted,
+            has_due_date=has_due_date,
+            has_note=has_note,
+            has_time_estimate=has_time_estimate,
+            has_scheduled_day=has_scheduled_day,
+            contains=contains,
+            due=due,
+            due_before=due_before,
+            due_after=due_after,
+            scheduled=scheduled,
+            scheduled_before=scheduled_before,
+            scheduled_after=scheduled_after,
+            done_after=done_after,
+            done_before=done_before,
+            parent_id=parent_id,
+            project_type=project_type,
+            is_starred=is_starred,
+            is_frogged=is_frogged,
+            priority=priority,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+            limit=limit,
+            bookmark=bookmark,
+            debug=debug,
+        )
+
+    @mcp.tool()
+    async def describe_doc_type(
+        doc_type: Annotated[
+            DocType,
+            PydanticField(
+                description=(
+                    "The CouchDB collection to describe — e.g. 'Tasks', "
+                    "'Categories', 'Habits', 'Goals'."
+                )
+            ),
+        ] = "Tasks",
+    ) -> StandardResponse:
+        """Return the field schema, applicable filters, gotchas, and examples for a doc_type.
+
+        Use before calling query_docs to discover:
+        - Which fields exist on each doc type (including fields REST strips).
+        - Which query_docs filters apply to that type.
+        - Type-specific gotchas (e.g. isStarred as boolean or number, day='unassigned').
+        - Ready-to-use query_docs example calls.
+
+        Returns a structured dict with keys: doc_type, fields, applicable_filters,
+        not_applicable, gotchas, examples.
+        """
+        start_time = time.time()
+        try:
+            schema = DOC_TYPE_SCHEMAS.get(doc_type)
+            if not schema:
+                return create_error_response(
+                    ValueError(f"Unknown doc_type {doc_type!r}"),
+                    "describe_doc_type",
+                    False,
+                    start_time,
+                )
+            return create_simple_response(
+                data={"doc_type": doc_type, **schema},
+                summary_text=f"Schema for doc_type={doc_type!r}: "
+                f"{len(schema.get('fields', {}))} fields, "
+                f"{len(schema.get('applicable_filters', []))} applicable filters",
+                api_endpoint="describe_doc_type",
+                api_calls_made=0,
+                debug=False,
+                start_time=start_time,
+            )
+        except Exception as e:
+            logger.exception("describe_doc_type failed")
+            return create_error_response(e, "describe_doc_type", False, start_time)
+
+
+
 def start():
     """Start the MCP server"""
 
