@@ -469,7 +469,7 @@ pytest tests/        # Tests
 ```
 
 ### 🔄 Available Tools
-The MCP provides 28 comprehensive tools to AI assistants:
+The MCP provides 38 tools with the standard API key, expanding to 42 with a full-access token and 40 with direct DB access (44 with both).
 
 **📖 Read Operations:**
 - `get_daily_productivity_overview()` - **PRIMARY** comprehensive daily view (today's tasks, overdue, completed, planning insights)
@@ -477,81 +477,59 @@ The MCP provides 28 comprehensive tools to AI assistants:
 - `get_projects()` - All projects
 - `get_categories()` - All categories
 - `get_due_items()` - Overdue/due items only
-- `get_child_tasks(
-    parent_id: str,
-    recursive: bool = False
-  )` - Subtasks of a parent task/project
-- `get_all_tasks(
-    label: str = None
-  )` - Find all tasks with optional label filter (comprehensive search)
+- `get_child_tasks(parent_id: str, recursive: bool = False)` - Subtasks of a parent task/project
+- `get_all_tasks(label: str = None)` - Find all tasks with optional label filter
 - `get_labels()` - Task labels
 - `get_goals()` - Goals and objectives
 - `get_account_info()` - Account details
 - `get_completed_tasks()` - Completed items with date categorization (defaults to past 7 days)
-- `get_completed_tasks_for_date(
-    date: str
-  )` - Completed items for specific date (YYYY-MM-DD format)
-- `get_productivity_summary_for_time_range(
-    days: int = 7,
-    start_date: str = None,
-    end_date: str = None
-  )` - Flexible productivity analytics
-- `get_currently_tracked_item()` - Active time tracking
+- `get_completed_tasks_for_date(date: str)` - Completed items for a specific date (YYYY-MM-DD)
+- `get_productivity_summary_for_time_range(days: int = 7, start_date: str = None, end_date: str = None)` - Flexible productivity analytics
+- `get_currently_tracked_item()` - Active time tracking item
+- `get_project_overview(project_id: str)` - Project analytics and task breakdown
+- `get_time_tracks(task_ids: list[str])` - Time tracking history for specific tasks
+- `get_today_time_blocks(date: str = None)` - Time blocks scheduled for today (or a given date)
+- `get_kudos_info()` - Reward system and kudos information
 
-**✏️ Write Operations:**
-- `create_task(
-    title: str,
-    project_id: str = None,
-    category_id: str = None,
-    due_date: str = None,
-    note: str = None
-  )` - Create new tasks
-- `mark_task_done(
-    item_id: str,
-    timezone_offset: int = 0
-  )` - Complete tasks
-- `create_project(
-    title: str,
-    project_type: str = "project"
-  )` - Create new projects
-- `start_time_tracking(
-    task_id: str
-  )` - Begin time tracking
-- `stop_time_tracking(
-    task_id: str
-  )` - End time tracking
-- `batch_mark_done(
-    task_ids: list[str]
-  )` - Complete multiple tasks
-- `batch_create_tasks(
-    task_list: list[str],
-    project_id: str = None,
-    category_id: str = None
-  )` - Create multiple tasks
-- `claim_reward_points(
-    points: int,
-    item_id: str,
-    date: str
-  )` - Claim kudos points
-- `get_kudos_info()` - Get reward system and kudos information
+**✏️ Task & Project Operations:**
+- `create_task(title: str, project_id: str = None, category_id: str = None, due_date: str = None, note: str = None)` - Create a new task
+- `mark_task_done(item_id: str, timezone_offset: int = 0)` - Complete a task
+- `batch_mark_done(task_ids: list[str])` - Complete multiple tasks at once
+- `batch_create_tasks(task_list: list[str], project_id: str = None, category_id: str = None)` - Create multiple tasks at once
+- `create_project(title: str, project_type: str = "project")` - Create a new project or category
+- `create_project_with_tasks(project_title: str, task_titles: list[str], project_type: str = "project")` - Create a project with pre-populated tasks
 
-**🔧 Utility Operations:**
+**⏱️ Time Tracking:**
+- `start_time_tracking(task_id: str)` - Begin time tracking on a task
+- `stop_time_tracking(task_id: str)` - End time tracking
+- `time_tracking_summary()` - Analytics across tracked sessions
+
+**🏆 Habits & Rewards:**
+- `get_habits()` - All habits
+- `get_habit(habit_id: str)` - A specific habit by ID
+- `record_habit(habit_id: str, value: int = None)` - Mark a habit as done today (optional numeric value for quantitative habits)
+- `undo_habit(habit_id: str)` - Undo the most recent habit recording
+- `claim_reward_points(points: int, item_id: str, date: str)` - Claim kudos points for a task
+- `spend_reward_points(points: int, date: str)` - Spend reward points
+- `unclaim_reward_points(item_id: str, date: str)` - Unclaim previously claimed reward points
+
+**📅 Calendar & Reminders:**
+- `add_event(title: str, start: str, length_minutes: int, note: str = None)` - Add a calendar event
+- `set_reminders(reminders: list[dict])` - Set reminders for tasks or events
+- `delete_reminders(reminder_ids: list[str])` - Delete reminders by ID
+
+**🔧 Utility:**
 - `test_api_connection()` - Verify API connectivity
-- `get_project_overview(
-    project_id: str
-  )` - Project analytics
-- `get_daily_focus()` - Daily priorities
-- `get_productivity_summary()` - Performance metrics
-- `time_tracking_summary()` - Time analytics
-- `quick_daily_planning()` - Planning assistance
-- `create_project_with_tasks(
-    project_title: str,
-    task_titles: list[str],
-    project_type: str = "project"
-  )` - Project setup
-- `get_time_tracks(
-    task_ids: list[str]
-  )` - Time tracking history
+
+**🔐 Full-access tools** (require `AMAZING_MARVIN_FULL_ACCESS_TOKEN` — hidden otherwise):
+- `get_document(item_id: str)` - Read any document by internal `_id`
+- `update_document(item_id: str, setters: dict)` - Set arbitrary fields on any document
+- `update_task(item_id: str, title: str = None, due_date: str = None, ...)` - Update a task with named parameters
+- `delete_document(item_id: str)` - Permanently delete a task or empty project/category
+
+**🗄️ Direct DB tools** (require `AMAZING_MARVIN_DB_*` credentials — hidden otherwise):
+- `query_docs(doc_type, fields, labels, ...)` - Rich CouchDB query with filtering and field projection
+- `describe_doc_type(doc_type)` - Field schema, filters, and examples for any document type
 
 ## 🤝 Contributing
 
