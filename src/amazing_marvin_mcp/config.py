@@ -1,7 +1,7 @@
 import logging
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Configure logging
 logging.basicConfig(
@@ -13,32 +13,29 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     """Configuration settings for the Amazing Marvin MCP"""
 
-    # API settings
-    amazing_marvin_api_key: str = Field(..., env="AMAZING_MARVIN_API_KEY")
-    amazing_marvin_full_access_token: str | None = Field(
-        default=None, env="AMAZING_MARVIN_FULL_ACCESS_TOKEN"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
     )
+
+    # API settings
+    amazing_marvin_api_key: str
+    amazing_marvin_full_access_token: str | None = None
 
     # CouchDB / Cloudant direct-access settings (optional — enables DB fast-paths)
-    amazing_marvin_db_uri: str | None = Field(default=None, env="AMAZING_MARVIN_DB_URI")
-    amazing_marvin_db_name: str | None = Field(default=None, env="AMAZING_MARVIN_DB_NAME")
-    amazing_marvin_db_user: str | None = Field(default=None, env="AMAZING_MARVIN_DB_USER")
-    amazing_marvin_db_password: str | None = Field(
-        default=None, env="AMAZING_MARVIN_DB_PASSWORD"
-    )
+    amazing_marvin_db_uri: str | None = None
+    amazing_marvin_db_name: str | None = None
+    amazing_marvin_db_user: str | None = None
+    amazing_marvin_db_password: str | None = None
 
     # Server settings
-    port: int = Field(default=3000, env="PORT")
-    host: str = Field(default="0.0.0.0", env="HOST")
+    port: int = Field(default=3000)
+    host: str = Field(default="0.0.0.0")
 
     # FastMCP settings
-    max_context_size: int = Field(default=8192, env="MAX_CONTEXT_SIZE")
-    max_request_size: int = Field(default=32768, env="MAX_REQUEST_SIZE")
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    max_context_size: int = Field(default=8192)
+    max_request_size: int = Field(default=32768)
 
 
 def get_settings() -> Settings:
