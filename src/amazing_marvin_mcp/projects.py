@@ -13,10 +13,13 @@ def create_project_with_tasks(
     project_title: str,
     task_titles: list[str],
     project_type: str = "project",
+    parent_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a project with multiple tasks at once."""
     # Create the project
-    project_data = {"title": project_title, "type": project_type}
+    project_data: dict[str, Any] = {"title": project_title, "type": project_type}
+    if parent_id:
+        project_data["parentId"] = parent_id
     created_project = api_client.create_project(project_data)
     project_id = created_project.get("_id")
 

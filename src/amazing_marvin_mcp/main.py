@@ -794,27 +794,39 @@ async def get_kudos_info(debug: bool = False) -> StandardResponse:
 
 @mcp.tool()
 async def create_project(
-    title: str, project_type: str = "project", debug: bool = False
+    title: str,
+    project_type: str = "project",
+    parent_id: str | None = None,
+    debug: bool = False,
 ) -> StandardResponse:
-    """Create a new project in Amazing Marvin"""
+    """Create a new project or category in Amazing Marvin.
+
+    Args:
+        title: Project title.
+        project_type: 'project' (default) or 'category'.
+        parent_id: Optional parent category/project ID. When omitted, the
+            new project lands at root (Inbox/unassigned).
+    """
     start_time = time.time()
     try:
         api_client = create_api_client()
 
-        project_data = {"title": title, "type": project_type}
+        project_data: dict[str, Any] = {"title": title, "type": project_type}
+        if parent_id:
+            project_data["parentId"] = parent_id
         created_project = api_client.create_project(project_data)
 
         return create_simple_response(
             data={"created_project": created_project},
             summary_text=f"Created project: {title}",
-            api_endpoint="/addCategory",
+            api_endpoint="/addProject",
             api_calls_made=1,
             debug=debug,
             start_time=start_time,
         )
     except Exception as e:
         logger.exception("Failed to create project '%s'", title)
-        return create_error_response(e, "/addCategory", debug, start_time)
+        return create_error_response(e, "/addProject", debug, start_time)
 
 
 @mcp.tool()
@@ -822,14 +834,23 @@ async def create_project_with_tasks(
     project_title: str,
     task_titles: list[str],
     project_type: str = "project",
+    parent_id: str | None = None,
     debug: bool = False,
 ) -> StandardResponse:
-    """Create a project with multiple tasks at once"""
+    """Create a project with multiple tasks at once.
+
+    Args:
+        project_title: Project title.
+        task_titles: List of task titles to create under the new project.
+        project_type: 'project' (default) or 'category'.
+        parent_id: Optional parent category/project ID for the new project.
+            When omitted, the project lands at root (Inbox/unassigned).
+    """
     start_time = time.time()
     try:
         api_client = create_api_client()
         result = create_project_impl(
-            api_client, project_title, task_titles, project_type
+            api_client, project_title, task_titles, project_type, parent_id
         )
 
         # Estimate API calls: 1 for project + 1 per task
@@ -838,14 +859,14 @@ async def create_project_with_tasks(
         return create_simple_response(
             data=result,
             summary_text=f"Created project '{project_title}' with {len(task_titles)} tasks",
-            api_endpoint="/addCategory + /addTask",
+            api_endpoint="/addProject + /addTask",
             api_calls_made=api_calls,
             debug=debug,
             start_time=start_time,
         )
     except Exception as e:
         logger.exception("Failed to create project with tasks")
-        return create_error_response(e, "/addCategory + /addTask", debug, start_time)
+        return create_error_response(e, "/addProject + /addTask", debug, start_time)
 
 
 @mcp.tool()

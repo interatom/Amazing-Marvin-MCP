@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from amazing_marvin_mcp.main import create_project as create_project_tool
+from amazing_marvin_mcp.main import create_project_with_tasks as create_project_with_tasks_tool
 from amazing_marvin_mcp.main import delete_document as delete_document_tool
 from amazing_marvin_mcp.main import get_categories
 from amazing_marvin_mcp.main import get_child_tasks as get_child_tasks_tool
@@ -2210,6 +2212,46 @@ class TestGetAllChildrenDb:
 
         ids = [d["_id"] for d in result]
         assert ids.count("g1") == 1
+
+
+class TestCreateProjectParentId:
+    """parent_id passthrough on create_project / create_project_with_tasks."""
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_create_project_passes_parent_id(self, mock_create: MagicMock) -> None:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.create_project.return_value = {"_id": "p1", "title": "Test"}
+        mock_create.return_value = client
+        asyncio.run(create_project_tool(title="Test", parent_id="cat_123"))
+        payload = client.create_project.call_args[0][0]
+        assert payload["parentId"] == "cat_123"
+        assert payload["title"] == "Test"
+        assert payload["type"] == "project"
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_create_project_omits_parent_id_when_none(self, mock_create: MagicMock) -> None:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.create_project.return_value = {"_id": "p1"}
+        mock_create.return_value = client
+        asyncio.run(create_project_tool(title="Test"))
+        payload = client.create_project.call_args[0][0]
+        assert "parentId" not in payload
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_create_project_with_tasks_propagates_parent_id(self, mock_create: MagicMock) -> None:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.create_project.return_value = {"_id": "p1"}
+        client.create_task.return_value = {"_id": "t1"}
+        mock_create.return_value = client
+        asyncio.run(
+            create_project_with_tasks_tool(
+                project_title="Test",
+                task_titles=["t1"],
+                parent_id="cat_456",
+            )
+        )
+        payload = client.create_project.call_args[0][0]
+        assert payload["parentId"] == "cat_456"
 
 
 if __name__ == "__main__":
