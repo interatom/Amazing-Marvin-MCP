@@ -19,8 +19,13 @@ _FIELD_MAP: dict[str, str] = {
     "backburner": "backburner",
 }
 
-# Fields for which Marvin also expects a fieldUpdates.<key> timestamp entry
+# Fields for which Marvin also expects a fieldUpdates.<key> timestamp entry.
+# Any user-visible field edit warrants a fieldUpdates entry so sync conflict
+# resolution can prefer the most recent change per field.
 _TRACKED_FIELDS: set[str] = {
+    "title",
+    "note",
+    "parentId",
     "dueDate",
     "day",
     "timeEstimate",
@@ -39,6 +44,14 @@ def build_setters(update: TaskUpdateRequest) -> list[dict]:
     Only includes fields that are not None. Appends fieldUpdates.<key> timestamp
     entries for tracked fields, and always appends updatedAt.
 
+    Wire-format conventions enforced here:
+    - timeEstimate: input is minutes; stored as milliseconds (×60 000).
+    - isStarred / isFrogged: input is bool; stored as tier number (True → 1,
+      False → null). Marvin uses 1/2/3 for tier levels and null for cleared.
+      To set a specific tier, use update_document with an explicit setter.
+    - parentId: caller-supplied. Conventions: "unassigned" = inbox,
+      "root" = top-level, null = same as root, or a category/project _id.
+
     Timestamps are in milliseconds since epoch (UTC).
     """
     now_ms = int(time.time() * 1000)
@@ -48,9 +61,10 @@ def build_setters(update: TaskUpdateRequest) -> list[dict]:
         value = getattr(update, model_field)
         if value is None:
             continue
-        # Convert time_estimate from minutes to milliseconds for Marvin
         if model_field == "time_estimate":
             value = value * 60 * 1000
+        elif model_field in ("is_starred", "is_frogged"):
+            value = 1 if value else None
         setters.append({"key": marvin_key, "val": value})
         if marvin_key in _TRACKED_FIELDS:
             setters.append({"key": f"fieldUpdates.{marvin_key}", "val": now_ms})

@@ -871,7 +871,7 @@ class TestSettersBuilder:
     NOW_MS = 1700000000000
 
     @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
-    def test_title_only_produces_title_and_updatedAt(self, _mock_time):
+    def test_title_produces_fieldUpdates_entry(self, _mock_time):
         from amazing_marvin_mcp.setters_builder import build_setters
         from amazing_marvin_mcp.models import TaskUpdateRequest
 
@@ -879,9 +879,70 @@ class TestSettersBuilder:
         setters = build_setters(req)
         keys = [s["key"] for s in setters]
         assert "title" in keys
+        assert "fieldUpdates.title" in keys
         assert "updatedAt" in keys
-        # title is not a tracked field, so no fieldUpdates entry
-        assert not any(k.startswith("fieldUpdates") for k in keys)
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_note_produces_fieldUpdates_entry(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", note="some text")
+        setters = build_setters(req)
+        keys = [s["key"] for s in setters]
+        assert "note" in keys
+        assert "fieldUpdates.note" in keys
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_parent_id_produces_fieldUpdates_entry(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", parent_id="proj1")
+        setters = build_setters(req)
+        keys = [s["key"] for s in setters]
+        assert "parentId" in keys
+        assert "fieldUpdates.parentId" in keys
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_is_starred_true_writes_tier_1(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", is_starred=True)
+        setters = build_setters(req)
+        starred = next(s for s in setters if s["key"] == "isStarred")
+        assert starred["val"] == 1
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_is_starred_false_writes_null(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", is_starred=False)
+        setters = build_setters(req)
+        starred = next(s for s in setters if s["key"] == "isStarred")
+        assert starred["val"] is None
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_is_frogged_true_writes_tier_1(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", is_frogged=True)
+        setters = build_setters(req)
+        frogged = next(s for s in setters if s["key"] == "isFrogged")
+        assert frogged["val"] == 1
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_is_frogged_false_writes_null(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", is_frogged=False)
+        setters = build_setters(req)
+        frogged = next(s for s in setters if s["key"] == "isFrogged")
+        assert frogged["val"] is None
 
     @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
     def test_due_date_produces_fieldUpdates_entry(self, _mock_time):
@@ -1229,10 +1290,11 @@ class TestDescribeDocType:
         not_applicable = " ".join(DOC_TYPE_SCHEMAS["Tasks"]["not_applicable"])
         assert "priority" in not_applicable
 
-    def test_categories_schema_lists_is_frogged_as_not_applicable(self):
+    def test_categories_schema_lists_is_frogged_as_applicable(self):
         from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
-        not_applicable = " ".join(DOC_TYPE_SCHEMAS["Categories"]["not_applicable"])
-        assert "is_frogged" in not_applicable
+        # is_frogged was widened to apply to Categories (projects can be frogged)
+        assert "is_frogged" in DOC_TYPE_SCHEMAS["Categories"]["applicable_filters"]
+        assert "is_starred" in DOC_TYPE_SCHEMAS["Categories"]["applicable_filters"]
 
     def test_tasks_gotchas_mention_isStarred_number_storage(self):
         from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
@@ -1317,6 +1379,17 @@ class TestBuildSelector:
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Categories")
         assert self._has_frag(sel, "done", {"$ne": True})
+
+    def test_include_done_false_adds_done_ne_true_for_goals(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Goals")
+        assert self._has_frag(sel, "done", {"$ne": True})
+
+    def test_include_done_true_omits_done_fragment_for_goals(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Goals", include_done=True)
+        frags = self._get_frags(sel)
+        assert not any("done" in f for f in frags)
 
     def test_include_done_false_omitted_for_habits(self):
         from amazing_marvin_mcp.db_filters import build_selector
@@ -1567,14 +1640,28 @@ class TestBuildSelector:
 
     # --- per-doc_type validation ---
 
-    def test_is_frogged_raises_for_non_tasks(self):
+    def test_is_frogged_works_for_categories(self):
         from amazing_marvin_mcp.db_filters import build_selector
-        with pytest.raises(ValueError, match="Tasks-only"):
-            build_selector("Categories", is_frogged=True)
+        sel = build_selector("Categories", is_frogged=True)
+        v = self._get_frag(sel, "isFrogged")
+        assert v is not None and "$in" in v
+        assert set(v["$in"]) == {True, 1, 2, 3}
+
+    def test_is_starred_works_for_categories(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", is_starred=True)
+        v = self._get_frag(sel, "isStarred")
+        assert v is not None and "$in" in v
+        assert set(v["$in"]) == {True, 1, 2, 3}
+
+    def test_is_frogged_raises_for_non_tasks_or_categories(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        with pytest.raises(ValueError, match="Tasks/Categories-only"):
+            build_selector("Habits", is_frogged=True)
 
     def test_is_starred_raises_for_habits(self):
         from amazing_marvin_mcp.db_filters import build_selector
-        with pytest.raises(ValueError, match="Tasks-only"):
+        with pytest.raises(ValueError, match="Tasks/Categories-only"):
             build_selector("Habits", is_starred=True)
 
     def test_priority_raises_for_tasks(self):

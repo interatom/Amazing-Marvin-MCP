@@ -39,7 +39,7 @@ def _absent_or_empty(field: str, extra_empty: list | None = None) -> dict:
     return {"$or": [{field: {"$exists": False}}, {field: {"$in": empties}}]}
 
 
-_TASKS_ONLY_PARAMS = {"is_frogged", "is_starred"}
+_TASKS_OR_CATEGORIES_PARAMS = {"is_frogged", "is_starred"}
 _CATEGORIES_ONLY_PARAMS = {"priority", "project_type"}
 
 
@@ -48,7 +48,7 @@ def build_selector(doc_type: str, **filters) -> dict:
 
     All kwargs are optional — supply only what you need. Fragments are combined
     with $and. Raises ValueError for per-doc_type violations (e.g. priority on
-    Tasks, is_frogged on Categories).
+    Tasks, is_frogged on Habits).
 
     Args:
         doc_type: CouchDB collection name (e.g. "Tasks", "Categories").
@@ -62,14 +62,15 @@ def build_selector(doc_type: str, **filters) -> dict:
         done_after, done_before: YYYY-MM-DD; Tasks use epoch-ms doneAt, others use doneDate string.
         parent_id: parentId equality (str).
         project_type: 'project' | 'category' — Categories only.
-        is_starred, is_frogged: bool | None — Tasks only.
+        is_starred, is_frogged: bool | None — Tasks and Categories (projects can
+            be starred/frogged with the same 1/2/3 tier semantics as tasks).
         priority: 'low' | 'mid' | 'high' — Categories only.
         contains: case-insensitive regex OR-matched across title and note.
     """
-    for param in _TASKS_ONLY_PARAMS:
-        if filters.get(param) is not None and doc_type != "Tasks":
+    for param in _TASKS_OR_CATEGORIES_PARAMS:
+        if filters.get(param) is not None and doc_type not in ("Tasks", "Categories"):
             raise ValueError(
-                f"{param!r} is a Tasks-only filter and cannot be used with "
+                f"{param!r} is a Tasks/Categories-only filter and cannot be used with "
                 f"doc_type={doc_type!r}."
             )
     for param in _CATEGORIES_ONLY_PARAMS:
@@ -86,8 +87,8 @@ def build_selector(doc_type: str, **filters) -> dict:
     if not filters.get("include_deleted", False):
         frags.append({"deletedAt": {"$exists": False}})
 
-    # Completion exclusion — Tasks and Categories carry the done field
-    if doc_type in ("Tasks", "Categories") and not filters.get("include_done", False):
+    # Completion exclusion — Tasks, Categories, and Goals carry the done field
+    if doc_type in ("Tasks", "Categories", "Goals") and not filters.get("include_done", False):
         frags.append({"done": {"$ne": True}})
 
     # Label any-of (resolved IDs)

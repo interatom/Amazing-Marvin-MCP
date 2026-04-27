@@ -127,34 +127,24 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
         "applicable_filters": [
             "labels", "exclude_labels",
             "include_done", "include_deleted",
-            "has_note", "done_after", "done_before",
-            "parent_id", "project_type", "priority", "contains",
+            "has_note", "has_due_date", "has_time_estimate", "has_scheduled_day",
+            "due", "due_before", "due_after",
+            "scheduled", "scheduled_before", "scheduled_after",
+            "done_after", "done_before",
+            "parent_id", "project_type", "priority",
+            "is_starred", "is_frogged", "contains",
         ],
-        "not_applicable": [
-            "is_frogged (Tasks only)",
-            "is_starred (Tasks only)",
-            "has_due_date (Tasks only)",
-            "has_time_estimate (Tasks only)",
-            "has_scheduled_day (Tasks only)",
-            "due/due_before/due_after (Tasks only)",
-            "scheduled/scheduled_before/scheduled_after (Tasks only)",
-        ],
+        "not_applicable": [],
         "gotchas": [
             "REST /categories strips the 'note' field; use query_docs to retrieve it",
             "Projects are stored in the same Categories collection as plain categories",
             "Use project_type='project' to return projects only",
             "doneDate is a string (YYYY-MM-DD), unlike Tasks which use epoch ms doneAt",
-            "Projects (type='project') can have day, dueDate, startDate, endDate, "
-            "firstScheduled, plannedWeek, plannedMonth like Tasks; the data is "
-            "present, but the query_docs filter parameters has_due_date, due*, "
-            "scheduled*, has_scheduled_day are currently restricted to Tasks. "
-            "Use query_docs(doc_type='Categories') and post-filter the docs, or "
-            "drop into find_docs / a raw Mango selector if you need server-side "
-            "filtering on these fields for projects.",
-            "Projects can carry isStarred and isFrogged with the same tier "
-            "semantics as Tasks (DSL predicates *isStarred / *isFrogged see them); "
-            "however the query_docs is_starred / is_frogged params are also "
-            "currently restricted to Tasks.",
+            "Projects (type='project') carry day, dueDate, startDate, endDate, "
+            "firstScheduled, plannedWeek, plannedMonth, isStarred, isFrogged with "
+            "the same semantics as Tasks. Plain categories rarely populate these "
+            "scheduling/priority fields, so filtering Categories by them mostly "
+            "selects projects in practice.",
         ],
         "examples": [
             'query_docs(doc_type="Categories", fields=["_id","title","note"])  # all category notes',
