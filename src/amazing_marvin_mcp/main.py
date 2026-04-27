@@ -1701,7 +1701,10 @@ if _couchdb_configured():
             PydanticField(
                 description=(
                     "Case-insensitive substring search, OR-matched across the "
-                    "'title' and 'note' fields."
+                    "'title' and 'note' fields. Single-token only — does not "
+                    "match subtask titles. For multi-word queries, quoted "
+                    "phrases, diacritic-insensitive matching, or matching "
+                    "against subtask titles, use search_docs instead."
                 )
             ),
         ] = None,
@@ -1947,6 +1950,68 @@ if _couchdb_configured():
         except Exception as e:
             logger.exception("describe_doc_type failed")
             return create_error_response(e, "describe_doc_type", False, start_time)
+
+    from .search import execute_search_docs
+
+    @mcp.tool()
+    async def search_docs(
+        query: str,
+        doc_types: list[str] | None = None,
+        search_notes: bool = True,
+        search_subtasks: bool = True,
+        include_done: bool = False,
+        include_deleted: bool = False,
+        fields: list[str] | None = None,
+        limit: int = 100,
+    ) -> StandardResponse:
+        """Free-text search across docs, mirroring the Marvin desktop Search view.
+
+        Searches title, optional subtask titles (Tasks only), and optional note text.
+        Multi-word queries match implicit-AND across whitespace-separated tokens;
+        quoted phrases match literally (case-sensitive if any uppercase letter,
+        case-insensitive otherwise); diacritics are stripped on both sides
+        ("cafe" matches "café").
+
+        Defaults to searching open Tasks and Categories — the same scope as the
+        client's Search view. Pass doc_types to broaden or narrow.
+
+        Use query_docs instead when you need date ranges, label-ID filters,
+        has_due_date / has_note / has_time_estimate / has_scheduled_day,
+        due / scheduled / done_after / done_before, parent_id, project_type,
+        is_starred / is_frogged, priority, or any structured filter beyond
+        free-text matching. search_docs accepts a query string only and cannot
+        compose with those predicates.
+
+        Args:
+            query: Free-text query. Examples: 'budget', 'Q1 review', '"exact phrase"'.
+            doc_types: Doc types to search. Defaults to ['Tasks', 'Categories'].
+                Subtask matching only applies to 'Tasks' (the only type with subtasks).
+            search_notes: Match against the note field too. Default True.
+            search_subtasks: Match against embedded subtask titles. Default True;
+                no-op for doc types without subtasks.
+            include_done: Include completed Tasks/Categories. Default False.
+            include_deleted: Include soft-deleted docs. Default False.
+            fields: Optional projection for the returned docs. _id and db are
+                always included. Subtasks/note are still scanned for matching
+                regardless of this projection.
+            limit: Max results. Default 100, clamped to 500.
+        """
+        try:
+            api_client = create_api_client()
+            return execute_search_docs(
+                api_client=api_client,
+                query=query,
+                doc_types=doc_types,
+                search_notes=search_notes,
+                search_subtasks=search_subtasks,
+                include_done=include_done,
+                include_deleted=include_deleted,
+                fields=fields,
+                limit=limit,
+            )
+        except Exception as e:
+            logger.exception("search_docs failed")
+            return create_error_response(e, "search_docs", False, time.time())
 
 
 def start():

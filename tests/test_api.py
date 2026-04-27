@@ -1992,6 +1992,206 @@ class TestQueryDocsTool:
         assert "query_docs" not in names
 
 
+class TestSearchMatcher:
+    """Unit tests for search_matcher — pure Python, no I/O."""
+
+    def test_single_token_substring(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        assert matches("budget", ["Q1 budget review"]) is True
+        assert matches("budget", ["Q1 review"]) is False
+
+    def test_case_insensitive(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        assert matches("BUDGET", ["q1 budget review"]) is True
+        assert matches("budget", ["Q1 BUDGET REVIEW"]) is True
+
+    def test_multi_token_implicit_and(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        # Both tokens hit different haystacks — still matches (any-haystack per token).
+        assert matches("Q1 budget", ["Q1 plan", "budget allocation"]) is True
+        # Missing one token — no match.
+        assert matches("Q1 budget", ["Q1 plan"]) is False
+
+    def test_quoted_phrase_case_sensitive_if_uppercase(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        # Quoted phrase with uppercase letter is case-sensitive.
+        assert matches('"Q1"', ["Q1 review"]) is True
+        assert matches('"Q1"', ["q1 review"]) is False
+
+    def test_quoted_phrase_case_insensitive_if_lowercase(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        assert matches('"hello"', ["Hello world"]) is True
+        assert matches('"hello"', ["HELLO world"]) is True
+
+    def test_diacritic_insensitive(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        assert matches("cafe", ["Café meeting"]) is True
+        assert matches("café", ["cafe meeting"]) is True
+        assert matches("naive", ["A naïve assumption"]) is True
+
+    def test_empty_query_returns_false(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        assert matches("", ["anything"]) is False
+        assert matches("   ", ["anything"]) is False
+
+    def test_none_or_empty_haystacks_skipped(self):
+        from amazing_marvin_mcp.search_matcher import matches
+        assert matches("budget", [None, "", "budget plan"]) is True
+        assert matches("budget", [None, ""]) is False
+
+    def test_tokenize_query_separates_phrases_and_tokens(self):
+        from amazing_marvin_mcp.search_matcher import tokenize_query
+        ci, cs = tokenize_query('Q1 budget "exact phrase" "Title"')
+        assert "q1" in ci
+        assert "budget" in ci
+        assert "exact phrase" in ci  # all-lowercase quoted phrase
+        assert "Title" in cs  # uppercase quoted phrase is case-sensitive
+
+    def test_longest_token_picks_longest(self):
+        from amazing_marvin_mcp.search_matcher import longest_token
+        # 'budget' (6) and 'review' (6) tie; either is acceptable.
+        assert longest_token("Q1 budget review") in {"budget", "review"}
+        # Single distinctly-longest token.
+        assert longest_token("Q1 documentation") == "documentation"
+        assert longest_token("budget") == "budget"
+        assert longest_token("") is None
+        assert longest_token("   ") is None
+
+
+class TestSearchDocsOrchestration:
+    """Unit tests for execute_search_docs — mocked api_client, no DB env required."""
+
+    def _make_client(self, *responses) -> MagicMock:
+        """Build a client whose find_docs returns the given envelopes in sequence."""
+        client = MagicMock()
+        client.find_docs.side_effect = list(responses)
+        return client
+
+    def _run(self, client: MagicMock, **kwargs) -> StandardResponse:
+        from amazing_marvin_mcp.search import execute_search_docs
+        defaults = dict(
+            doc_types=["Tasks", "Categories"],
+            search_notes=True,
+            search_subtasks=True,
+            include_done=False,
+            include_deleted=False,
+            fields=None,
+            limit=100,
+        )
+        defaults.update(kwargs)
+        return execute_search_docs(client, **defaults)
+
+    def test_title_match(self):
+        client = self._make_client(
+            {"docs": [{"_id": "t1", "db": "Tasks", "title": "Q1 budget review", "updatedAt": 1000}]},
+            {"docs": []},  # Categories
+            {"docs": []},  # Tasks subtask scan
+        )
+        r = self._run(client, query="budget")
+        assert r.success
+        assert r.data["count"] == 1
+        assert r.data["docs"][0]["_id"] == "t1"
+
+    def test_subtask_match(self):
+        client = self._make_client(
+            {"docs": []},  # Tasks title-prefilter — no hits
+            {"docs": []},  # Categories
+            {"docs": [{
+                "_id": "t2", "db": "Tasks", "title": "Q1 Plan",
+                "subtasks": {"s1": {"title": "Review budget"}},
+                "updatedAt": 2000,
+            }]},
+        )
+        r = self._run(client, query="budget")
+        assert r.data["count"] == 1
+        assert r.data["docs"][0]["_id"] == "t2"
+
+    def test_multi_token_and(self):
+        # Mango pre-filter returns docs containing 'budget' (the longest token).
+        # Python post-filter discards docs that don't also contain 'Q1'.
+        client = self._make_client(
+            {"docs": [
+                {"_id": "a", "db": "Tasks", "title": "Q1 budget", "updatedAt": 5000},
+                {"_id": "b", "db": "Tasks", "title": "budget Q2", "updatedAt": 4000},
+            ]},
+            {"docs": []},
+            {"docs": []},
+        )
+        r = self._run(client, query="Q1 budget")
+        assert [d["_id"] for d in r.data["docs"]] == ["a"]
+
+    def test_empty_query_returns_validation_error(self):
+        client = self._make_client()
+        r = self._run(client, query="")
+        assert r.success is False
+        assert "query is required" in r.summary.text
+
+    def test_unknown_doc_type_returns_validation_error(self):
+        client = self._make_client()
+        r = self._run(client, query="x", doc_types=["Bogus"])
+        assert r.success is False
+        assert "Bogus" in r.summary.text
+
+    def test_search_notes_false_excludes_note_haystack(self):
+        # The note contains 'budget' but title doesn't. With search_notes=False,
+        # the post-filter should reject it.
+        client = self._make_client(
+            {"docs": [{
+                "_id": "t3", "db": "Tasks", "title": "Q1 review",
+                "note": "Allocate budget for Q1", "updatedAt": 1000,
+            }]},
+            {"docs": []},
+            {"docs": []},
+        )
+        r = self._run(client, query="budget", search_notes=False)
+        assert r.data["count"] == 0
+
+    def test_fields_projection_limits_response_keys(self):
+        client = self._make_client(
+            {"docs": [{
+                "_id": "t1", "db": "Tasks", "title": "budget review",
+                "note": "extra", "updatedAt": 1000, "createdAt": 500,
+            }]},
+            {"docs": []},
+            {"docs": []},
+        )
+        r = self._run(client, query="budget", fields=["title"])
+        keys = set(r.data["docs"][0].keys())
+        assert keys == {"_id", "db", "title"}  # _id and db always retained
+
+    def test_sort_by_updatedAt_desc(self):
+        client = self._make_client(
+            {"docs": [
+                {"_id": "old", "db": "Tasks", "title": "budget v1", "updatedAt": 100},
+                {"_id": "new", "db": "Tasks", "title": "budget v2", "updatedAt": 9000},
+            ]},
+            {"docs": []},
+            {"docs": []},
+        )
+        r = self._run(client, query="budget")
+        assert [d["_id"] for d in r.data["docs"]] == ["new", "old"]
+
+    def test_limit_clamped_to_500(self):
+        client = self._make_client(
+            {"docs": []}, {"docs": []}, {"docs": []},
+        )
+        r = self._run(client, query="x", limit=10000)
+        # Should not raise and should still succeed. Limit is internal; not visible
+        # here, but the call should complete.
+        assert r.success
+
+
+class TestSearchDocsRegistration:
+    """search_docs is only registered when CouchDB credentials are present."""
+
+    def test_search_docs_not_registered_without_db_creds(self):
+        import asyncio
+        from amazing_marvin_mcp.main import mcp
+        tools = asyncio.run(mcp.list_tools())
+        names = [t.name for t in tools]
+        assert "search_docs" not in names
+
+
 class TestCouchDBAccess:
     """Unit tests for CouchDB/Cloudant integration — no live API calls.
 
