@@ -18,18 +18,39 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "_id": "string",
             "db": "string (always 'Tasks')",
             "title": "string",
+            "note": "string (markdown)",
             "done": "boolean",
-            "doneAt": "number (epoch ms)",
+            "doneAt": "number (epoch ms when completed)",
+            "workedOnAt": "number | null (epoch ms last time worked on or tracked)",
             "dueDate": "string (YYYY-MM-DD)",
             "day": "string (YYYY-MM-DD or 'unassigned')",
-            "isStarred": "boolean | number (1/2/3 for priority tiers)",
-            "isFrogged": "boolean | number (1/2/3 for frog tiers)",
+            "startDate": "string (YYYY-MM-DD) | null",
+            "endDate": "string (YYYY-MM-DD) | null",
+            "firstScheduled": "string (YYYY-MM-DD) | null (first time this task was scheduled — drives procrastination tracking)",
+            "plannedWeek": "string (YYYY-MM-DD of ISO week start) | null",
+            "plannedMonth": "string (YYYY-MM-DD of month start) | null",
+            "isStarred": "boolean | number (1/2/3 for priority tiers; null/false when cleared)",
+            "isFrogged": "boolean | number (1/2/3 for frog tiers; null/false when cleared)",
+            "isPinned": "boolean (true when this task is the pinned-task parent in the Master List)",
+            "isUrgent": "boolean",
+            "isReward": "boolean (true when this is a reward task from the Reward Tasks strategy)",
             "labelIds": "array of string (label IDs)",
-            "parentId": "string (parent category/project ID; absent = inbox)",
+            "parentId": "string ('unassigned' = inbox; 'root', null, or absent = top-level; otherwise a Categories _id)",
             "timeEstimate": "number (milliseconds)",
-            "note": "string (markdown)",
             "backburner": "boolean",
-            "fieldUpdates": "object (timestamps of last field changes, epoch ms per field)",
+            "recurring": "boolean (true when this task instance was generated from a RecurringTasks template)",
+            "recurringTaskId": "string (when recurring=true, the _id of the source RecurringTasks template)",
+            "subtasks": "object (embedded subtasks keyed by their _id — NOT separate documents)",
+            "rank": "number (sort order within parent)",
+            "masterRank": "number (master sort order across all docs)",
+            "reminder": "object | null (reminder configuration when set)",
+            "remindAt": "number | null (epoch ms when the reminder fires)",
+            "sectionId": "string (planner / time-block section assignment; '' if unset)",
+            "dailySection": "string (Daily Structure section assignment, e.g. 'morning', 'afternoon')",
+            "bonusSection": "string (Bonus Structure section assignment)",
+            "customSection": "string (custom section assignment)",
+            "timeBlockSection": "string (time block section assignment)",
+            "fieldUpdates": "object (per-field timestamps of last edit, epoch ms)",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
             "createdAt": "number (epoch ms)",
             "updatedAt": "number (epoch ms)",
@@ -53,6 +74,14 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "isFrogged stored as boolean OR number 1/2/3 (frog tiers); "
             "is_frogged=True matches any truthy value",
             "day field can be the string 'unassigned', not null",
+            "parentId='unassigned' means inbox; parentId='root', null, or absent means top-level",
+            "Sections are NOT a separate doc type. The DSL !SectionName "
+            "predicate matches against dailySection / bonusSection / "
+            "customSection (case-insensitive). 'sectionId' is a separate "
+            "field used for planner/time-block section assignment, not the "
+            "same thing. To filter by section in query_docs, fetch Tasks "
+            "and post-filter on dailySection/bonusSection/customSection — "
+            "or use the SmartLists 'advanced' DSL.",
             "Subtasks are embedded in the parent Task's 'subtasks' object, not separate docs",
             "Recurring task instances are separate from their RecurringTasks templates",
             "done=true tasks excluded by default — use include_done=True to include them",
@@ -71,11 +100,26 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "title": "string",
             "type": "string ('project' for projects; absent or other value for categories)",
             "note": "string (markdown — NOT returned by the REST /categories endpoint)",
-            "parentId": "string",
+            "parentId": "string ('root', null, or absent = top-level; otherwise another Categories _id)",
             "labelIds": "array of string",
             "priority": "string ('low', 'mid', 'high')",
+            "color": "string (hex color, e.g. '#5b9dff')",
+            "icon": "string (icon name)",
+            "rank": "number (sort order within parent)",
+            "masterRank": "number (master sort order)",
             "done": "boolean",
             "doneDate": "string (YYYY-MM-DD)",
+            "day": "string (YYYY-MM-DD or 'unassigned'; projects can be scheduled like tasks)",
+            "dueDate": "string (YYYY-MM-DD; projects can have due dates)",
+            "startDate": "string (YYYY-MM-DD) | null",
+            "endDate": "string (YYYY-MM-DD) | null",
+            "firstScheduled": "string (YYYY-MM-DD) | null",
+            "plannedWeek": "string (YYYY-MM-DD of ISO week start) | null",
+            "plannedMonth": "string (YYYY-MM-DD of month start) | null",
+            "reviewDate": "string (YYYY-MM-DD) | null",
+            "isStarred": "boolean | number (1/2/3 priority tiers; null/false when cleared; projects can be starred)",
+            "isFrogged": "boolean | number (1/2/3 frog tiers; null/false when cleared; projects can be frogged)",
+            "strategySettings": "object (per-project strategy overrides)",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
             "createdAt": "number (epoch ms)",
             "updatedAt": "number (epoch ms)",
@@ -100,6 +144,17 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "Projects are stored in the same Categories collection as plain categories",
             "Use project_type='project' to return projects only",
             "doneDate is a string (YYYY-MM-DD), unlike Tasks which use epoch ms doneAt",
+            "Projects (type='project') can have day, dueDate, startDate, endDate, "
+            "firstScheduled, plannedWeek, plannedMonth like Tasks; the data is "
+            "present, but the query_docs filter parameters has_due_date, due*, "
+            "scheduled*, has_scheduled_day are currently restricted to Tasks. "
+            "Use query_docs(doc_type='Categories') and post-filter the docs, or "
+            "drop into find_docs / a raw Mango selector if you need server-side "
+            "filtering on these fields for projects.",
+            "Projects can carry isStarred and isFrogged with the same tier "
+            "semantics as Tasks (DSL predicates *isStarred / *isFrogged see them); "
+            "however the query_docs is_starred / is_frogged params are also "
+            "currently restricted to Tasks.",
         ],
         "examples": [
             'query_docs(doc_type="Categories", fields=["_id","title","note"])  # all category notes',
@@ -144,9 +199,35 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "_id": "string",
             "db": "string (always 'Habits')",
             "title": "string",
-            "note": "string",
+            "note": "string (markdown)",
+            "color": "string (hex color; '' if unset)",
+            "parentId": "string ('unassigned' = inbox; otherwise a Categories _id)",
             "labelIds": "array of string",
+            "isStarred": "number (1/2/3 priority tier; 0 when cleared)",
+            "isFrogged": "number (1/2/3 frog tier; 0 when cleared)",
+            "timeEstimate": "number (milliseconds; 0 if unset)",
+            "startDate": "string (YYYY-MM-DD; when habit tracking started)",
+            "endDate": "string (YYYY-MM-DD) | null",
+            "history": "array (chronological record of habit completions / values)",
+            "units": "string ('times', 'minutes', etc.; what the target counts)",
+            "period": "string ('day', 'week', etc.; how often the target should be met)",
+            "target": "number (target count per period)",
+            "isPositive": "boolean (true = build habit; false = avoid habit)",
+            "recordType": "string ('boolean' for done/not done; 'number' for quantitative; ...)",
+            "showInDayView": "boolean",
+            "showInCalendar": "boolean",
+            "askOn": "array of integers (days of week the habit prompts; 1=Mon..7=Sun)",
+            "time": "string | null (HH:MM; preferred time of day)",
+            "startTime": "string | null (HH:MM; window start for the habit)",
+            "showAfterSuccess": "boolean (continue showing after target reached)",
+            "showAfterRecord": "boolean (continue showing after recording)",
+            "sendReminders": "boolean",
+            "reminderTimes": "array | null (specific reminder times)",
+            "reminderDays": "array | null (days reminders fire)",
+            "reminderText": "string | null",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
+            "createdAt": "number (epoch ms)",
+            "updatedAt": "number (epoch ms)",
         },
         "applicable_filters": ["labels", "exclude_labels", "include_deleted", "has_note", "contains"],
         "not_applicable": [
@@ -154,18 +235,33 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "due", "scheduled", "done_after", "done_before",
             "parent_id", "project_type", "is_starred", "is_frogged", "priority",
         ],
-        "gotchas": [],
-        "examples": ['query_docs(doc_type="Habits")  # all habits'],
+        "gotchas": [
+            "Habit completions are appended to the 'history' array; use the "
+            "record_habit MCP tool rather than writing history entries directly.",
+            "isStarred/isFrogged on habits use 0 (cleared) and 1/2/3 (tier) — "
+            "no boolean form like Tasks/Categories may carry.",
+            "askOn uses 1=Monday..7=Sunday integers (different from RecurringTasks' "
+            "weekDays which uses 0=Sunday..6=Saturday).",
+        ],
+        "examples": [
+            'query_docs(doc_type="Habits")  # all habits',
+            'query_docs(doc_type="Habits", fields=["_id","title","target","period","units"])',
+        ],
     },
     "Goals": {
         "fields": {
             "_id": "string",
             "db": "string (always 'Goals')",
             "title": "string",
-            "note": "string",
+            "note": "string (markdown)",
             "labelIds": "array of string",
             "done": "boolean",
+            "hasEnd": "boolean (true if the goal has a target end date)",
+            "status": "string (goal lifecycle status, e.g. 'active', 'completed', 'abandoned', 'pending')",
+            "sections": "array of {_id, title} (Goal Phases / milestones; the UI calls these 'sections' but they are unrelated to project sections)",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
+            "createdAt": "number (epoch ms)",
+            "updatedAt": "number (epoch ms)",
         },
         "applicable_filters": [
             "labels", "exclude_labels", "include_done", "include_deleted",
@@ -176,7 +272,21 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "due", "scheduled", "done_after", "done_before",
             "parent_id", "project_type", "is_starred", "is_frogged", "priority",
         ],
-        "gotchas": [],
+        "gotchas": [
+            "Membership in a goal is recorded on tasks/categories via a "
+            "'g_in_<goalId>: true' field on the member doc, NOT as a list on "
+            "the goal itself. To find a goal's members, query tasks/categories "
+            "where g_in_<goalId> is truthy, or use the SmartLists DSL "
+            "predicates inGoal / *inGoal.",
+            "Goals are constructed permissively (no canonical default-doc "
+            "factory), so optional fields like hasEnd / status may be absent on "
+            "older goal documents.",
+            "A goal's 'sections' array contains Goal Phases (the milestones "
+            "shown in the goal overlay UI), each {_id, title}. These are "
+            "NOT project sections / DSL !SectionName matches; that's a "
+            "separate concept stored on Tasks via dailySection / "
+            "bonusSection / customSection. Same field name, unrelated data.",
+        ],
         "examples": ['query_docs(doc_type="Goals")  # all goals'],
     },
     "Trackers": {
@@ -256,11 +366,41 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
         "fields": {
             "_id": "string",
             "db": "string (always 'RecurringTasks')",
+            "recurringType": "string ('task' = generates Tasks; 'project' = generates Categories with type='project')",
             "title": "string",
-            "note": "string",
+            "note": "string (markdown)",
             "labelIds": "array of string",
+            "parentId": "string ('unassigned' or a Categories _id)",
             "timeEstimate": "number (milliseconds)",
+            "type": "string (recurrence pattern: 'daily' | 'repeat week' | 'n per week' | 'monthly' | 'repeat month' | 'repeat year' | 'echo' | 'custom')",
+            "day": "number | null (for some patterns: day-of-week index, Sunday=0)",
+            "date": "number | null (for monthly patterns: day of month, 1-31)",
+            "weekDays": "array of integers (for 'n per week': day-of-week indices, Sunday=0..Saturday=6)",
+            "repeat": "number (interval, e.g. 2 = every 2 weeks)",
+            "repeatStart": "string (YYYY-MM-DD; recurrence start date)",
+            "endDate": "string (YYYY-MM-DD) | null",
+            "echoDays": "number (for echo recurrences)",
+            "onCount": "number (for 'n on / m off' patterns: 'on' duration in days)",
+            "offCount": "number (for 'n on / m off' patterns: 'off' duration in days)",
+            "customRecurrence": "string (custom recurrence expression for type='custom')",
+            "limitToWeekdays": "boolean (skip weekends when generating instances)",
+            "dueIn": "number (days offset from each generated schedule date for the dueDate)",
+            "endIn": "number (days offset from schedule date for the endDate)",
+            "startIn": "number (days offset for the startDate)",
+            "subtaskList": "array (template subtasks; each generated Task instance receives copies)",
+            "descendants": "array (recurringType='project' only: template descendant tasks/projects)",
+            "sectionId": "string | null",
+            "isStarred": "boolean | number (1/2/3 priority tier)",
+            "isFrogged": "boolean | number (1/2/3 frog tier)",
+            "isUrgent": "boolean",
+            "isReward": "boolean",
+            "backburner": "boolean",
+            "rewardPoints": "number",
+            "taskTime": "string | null (HH:MM; default time-of-day on generated instances)",
+            "reminderOffset": "number | null (offset for auto-reminders on generated instances)",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
+            "createdAt": "number (epoch ms)",
+            "updatedAt": "number (epoch ms)",
         },
         "applicable_filters": [
             "labels", "exclude_labels", "include_deleted",
@@ -272,9 +412,22 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "parent_id", "project_type", "is_starred", "is_frogged", "priority",
         ],
         "gotchas": [
-            "These are templates; each generates individual Task docs when triggered",
+            "These are templates; each generates individual Task or project "
+            "Categories docs when triggered. Generated instances carry "
+            "recurring=true and recurringTaskId pointing back here.",
+            "weekDays uses Sunday=0..Saturday=6 indexing (different from Habits' "
+            "askOn which uses 1=Mon..7=Sun).",
+            "recurringType='project' templates also use 'descendants' to define "
+            "template descendant tasks; recurringType='task' templates use "
+            "'subtaskList' for embedded subtasks instead.",
+            "'type' is the recurrence pattern, NOT the projects/categories type. "
+            "Common values: 'daily', 'repeat week', 'n per week', 'monthly', "
+            "'repeat month', 'repeat year', 'echo'.",
         ],
-        "examples": ['query_docs(doc_type="RecurringTasks")  # all recurring task templates'],
+        "examples": [
+            'query_docs(doc_type="RecurringTasks")  # all recurring task templates',
+            'query_docs(doc_type="RecurringTasks", fields=["_id","title","type","repeat","repeatStart"])  # see recurrence rules',
+        ],
     },
     "SavedItems": {
         "fields": {
