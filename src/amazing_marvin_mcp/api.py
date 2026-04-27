@@ -368,11 +368,40 @@ class MarvinAPIClient:
         return self._make_request("post", "/updateHabit", data=habit_data)
 
     def set_reminders(self, reminders: list[dict]) -> dict:
-        """Set reminders."""
+        """Set one or more reminders.
+
+        Each reminder dict is expected to carry the canonical Marvin shape:
+
+            reminderId : str   — the task _id for task reminders, or any
+                                  unique string for manual reminders.
+            time       : int   — Unix epoch SECONDS (NOT milliseconds) when
+                                  the reminder fires.
+            type       : str   — "T" for task-linked reminders,
+                                  "M" for manual reminders,
+                                  "t" for test reminders.
+            title      : str   — display text, ≤200 chars.
+            snooze     : int   — default snooze duration in seconds.
+            autoSnooze : int   — default auto-snooze duration in seconds.
+            canTrack   : bool  — whether the reminder can start time-tracking
+                                  on dismiss.
+            offset     : int (optional) — seconds before/after the reference
+                                  time at which to fire (for tasks with offset
+                                  reminders).
+
+        Pass-through to /reminder/set; no client-side validation. The server
+        is permissive about additional fields but the names above are what the
+        Marvin client itself sends.
+        """
         return self._make_request("post", "/reminder/set", data={"reminders": reminders})
 
     def delete_reminders(self, reminder_ids: list[str]) -> dict:
-        """Delete reminders by ID."""
+        """Delete reminders by ID.
+
+        reminder_ids: list of reminderId strings (matches the reminderId values
+        used in set_reminders). Reminders are write-only on the server — there
+        is no GET endpoint to list them, so callers must track their own
+        reminderIds if they want to selectively delete.
+        """
         return self._make_request(
             "post", "/reminder/delete", data={"reminderIds": reminder_ids}
         )

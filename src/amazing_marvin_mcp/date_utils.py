@@ -1,10 +1,26 @@
-"""Date utilities for Amazing Marvin MCP."""
+"""Date utilities for Amazing Marvin MCP.
+
+Limitation: these helpers use the host's local calendar date and do NOT honor
+Marvin's profile-level rollover hour (the hour at which "today" rolls to the
+next day, e.g. 4 AM for users who work late) or the user's configured work-week
+start. On accounts that customize these settings, the values returned here can
+disagree with Marvin's logical "today" by one day around the rollover hour, and
+week boundaries computed from these dates won't match what the client shows.
+Productivity summary date ranges driven by `get_today` / `get_yesterday` are
+the most likely place this drift surfaces. A rollover-aware implementation
+would need to read ProfileItems (`profile.rollover`, `profile.weekStart`) and
+apply them — kept out of scope here to avoid making date math depend on a
+profile fetch on every call.
+"""
 
 from datetime import datetime, timedelta
 
 
 class DateUtils:
-    """Utility class for date operations."""
+    """Utility class for date operations.
+
+    See module docstring for the rollover/weekStart limitation.
+    """
 
     DATE_FORMAT = "%Y-%m-%d"
 
@@ -20,12 +36,18 @@ class DateUtils:
 
     @staticmethod
     def get_today() -> str:
-        """Get today's date as YYYY-MM-DD string."""
+        """Get today's local-calendar date as YYYY-MM-DD.
+
+        Does not apply Marvin's profile.rollover hour — see module docstring.
+        """
         return DateUtils.format_date(datetime.now())
 
     @staticmethod
     def get_yesterday() -> str:
-        """Get yesterday's date as YYYY-MM-DD string."""
+        """Get yesterday's local-calendar date as YYYY-MM-DD.
+
+        Does not apply Marvin's profile.rollover hour — see module docstring.
+        """
         yesterday = datetime.now() - timedelta(days=1)
         return DateUtils.format_date(yesterday)
 

@@ -1221,7 +1221,17 @@ class TestNewMcpTools:
         client.set_reminders.return_value = {}
         mock_create.return_value = client
 
-        reminders = [{"itemId": "t1", "time": 900}]
+        # Canonical reminder shape: reminderId (not itemId), Unix epoch seconds
+        # for time, plus type/title/snooze/autoSnooze/canTrack.
+        reminders = [{
+            "reminderId": "t1",
+            "time": 1_750_000_000,
+            "type": "T",
+            "title": "Sample task",
+            "snooze": 600,
+            "autoSnooze": 300,
+            "canTrack": True,
+        }]
         asyncio.run(set_reminders_tool(reminders))
         client.set_reminders.assert_called_once_with(reminders)
 
