@@ -9,7 +9,7 @@ from typing import Literal
 DocType = Literal[
     "Tasks", "Categories", "Labels", "LabelGroups", "Habits", "Goals",
     "Trackers", "Rewards", "Events", "PlannerItems", "Calendars",
-    "RecurringTasks", "SavedItems", "ProfileItems",
+    "RecurringTasks", "SavedItems", "ProfileItems", "SmartLists",
 ]
 
 DOC_TYPE_SCHEMAS: dict[str, dict] = {
@@ -295,8 +295,100 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
         },
         "applicable_filters": ["include_deleted", "contains"],
         "not_applicable": [],
-        "gotchas": [],
+        "gotchas": [
+            "profile.strategySettings.plannerSmartLists holds the Planner view's "
+            "pinned smart-list IDs (when configured). Smart-list definitions "
+            "themselves live in the SmartLists collection — see "
+            'describe_doc_type("SmartLists").',
+            "Reminders are not a queryable doc type — they exist server-side only "
+            "and are not stored in CouchDB.",
+        ],
         "examples": ['query_docs(doc_type="ProfileItems")  # all profile items'],
+    },
+    "SmartLists": {
+        "fields": {
+            "_id": "string",
+            "_rev": "string",
+            "db": "string (always 'SmartLists')",
+            "name": "string (display name; NOT called 'title')",
+            "note": "string | null (markdown)",
+            "groupBy": "string | null (e.g. 'mainCategoryId')",
+            "oneRT": "boolean (one-recurring-task expansion flag)",
+            "removeRedundancies": "boolean",
+            "isPinned": "boolean (Planner pin state; presence varies)",
+            "sort": "array",
+            "limit": "integer (0 = unlimited observed)",
+            "refill": "string ('auto' observed)",
+            "createdAt": "number (epoch ms)",
+            "updatedAt": "number (epoch ms)",
+            "fieldUpdates": "object (per-field timestamps, epoch ms)",
+            "itemType": "object {op, val} | null (filter clause; e.g. {'op':'task'})",
+            "recurring": "object {op, val} | null",
+            "parentId": "object {op, val} | null",
+            "goalId": "object {op, val} | null",
+            "title": "object {op, val} | null (filter on task title; not the SmartList's own name)",
+            "hasTime": "object {op, val} | null",
+            "created": "object {op, val} | null",
+            "day": "object {op, val} | null",
+            "dueDate": "object {op, val} | null",
+            "endDate": "object {op, val} | null",
+            "startDate": "object {op, val} | null",
+            "pledgeDate": "object {op, val} | null",
+            "firstScheduled": "object {op, val} | null",
+            "procrastinationCount": "object {op, val} | null",
+            "backburner": "object {op, val} | null",
+            "isStarred": "object {op, val} | null",
+            "isFrogged": "object {op, val} | null",
+            "labelIds": "object {op, val} | null",
+            "project": "object {op, val} | null",
+            "nextStep": "object {op, val} | null",
+            "planAhead": "object {op, val} | null",
+            "timeEstimate": "object {op, val} | null",
+            "timeBlock": "object {op, val} | null",
+            "advanced": "object {op, val} | null (val carries Marvin internal query DSL)",
+        },
+        "applicable_filters": ["include_deleted"],
+        "not_applicable": [
+            "contains (query_docs searches title/note; SmartLists uses 'name' for "
+            "display, so contains will not match smart-list names — only their notes)",
+            "labels, exclude_labels (no labelIds on the SmartList itself)",
+            "include_done, has_due_date, has_time_estimate, has_scheduled_day, "
+            "due/due_*, scheduled/scheduled_*, done_*, parent_id, project_type, "
+            "is_starred, is_frogged, priority (Tasks/Categories-specific filters)",
+        ],
+        "gotchas": [
+            "Each filter field is null or an {'op': operator, 'val': value} object — "
+            "the UI-driven structure stored in CouchDB, distinct from the advanced "
+            "DSL. Call describe_smartlist_dsl(category='per_field_ops') for the "
+            "full op vocabulary per field (18 fields covered: itemType, day, "
+            "parentId, labelIds, goalId, backburner, hasTime, isPinned, orbit, "
+            "recurring, timeEstimate, timeBlock, title, planAhead, "
+            "procrastinationCount, created, firstScheduled, nextStep). Quirk: "
+            "the 'backburner' field's clause sometimes omits 'op' and uses bare "
+            "{'val': 'y'|'n'}.",
+            "The 'advanced' field's val is a postfix-RPN DSL. Call "
+            "describe_smartlist_dsl() for a summary, then "
+            "describe_smartlist_dsl(category='predicates'|'functions'|'operators'|"
+            "'tokens') to dump a registry, or describe_smartlist_dsl(name='...') "
+            "to look up a single identifier (e.g. name='isNextStep', name='&&', "
+            "name='parent'). Coverage: 130 predicates (boolean tests, date "
+            "keywords, comparable fields), 6 functions (parent, anyAncestor, "
+            "anyChild, allChildren, anySibling, allSiblings), 11 operators "
+            "(! && || == != > < >= <= + -), 15 token types. Help center subset: "
+            "https://help.amazingmarvin.com/en/articles/2070779-advanced-smart-list-filters",
+            "Workflow-preset smart lists (IDs prefixed 'WF_') are stored sparsely "
+            "with only filter-relevant fields populated; user-created smart lists "
+            "default to a full field set with most filter fields null.",
+            "Display name is in 'name', not 'title'. The query_docs 'contains' "
+            "filter targets title/note and will not match smart-list names.",
+            "Planner-view pinned IDs are stored separately at "
+            "profile.strategySettings.plannerSmartLists in a ProfileItems doc, "
+            "not on the smart-list itself.",
+        ],
+        "examples": [
+            'query_docs(doc_type="SmartLists")  # list all smart lists',
+            'get_document("WF_GTD_nextActions")  # fetch a workflow-preset smart list by ID',
+        ],
     },
 }
 

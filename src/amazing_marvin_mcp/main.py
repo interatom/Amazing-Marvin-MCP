@@ -1452,6 +1452,113 @@ async def unclaim_reward_points(
         return create_error_response(e, "/unclaimRewardPoints", debug, start_time)
 
 
+@mcp.tool()
+async def describe_smartlist_dsl(
+    category: str | None = None,
+    name: str | None = None,
+) -> StandardResponse:
+    """Look up the Marvin SmartLists filter DSL: predicates, functions, operators, tokens, and per-field op vocabularies.
+
+    Use when reading or writing smart-list filters via query_docs/get_document/update_document
+    to validate predicate names, decode operator semantics, or list valid op strings for a given filter field.
+
+    Args:
+        category: One of "predicates", "functions", "operators", "tokens", "per_field_ops", or "all".
+                  Omit for a summary of counts and category names.
+        name: Look up a specific identifier (e.g. "isNextStep", "parent", "&&", "labelIds").
+              If category is set, search within that category; otherwise search all.
+
+    Returns:
+        - No args: summary with category counts and a sample of names from each.
+        - category only: that registry as a dict.
+        - name only: first match across registries, with its category.
+        - category + name: that one entry, or a not-found error.
+    """
+    start_time = time.time()
+    try:
+        from .smartlist_dsl import (
+            FUNCTIONS,
+            OPERATORS,
+            PER_FIELD_OPS,
+            PREDICATES,
+            TOKENS,
+        )
+
+        registries: dict[str, dict] = {
+            "predicates": PREDICATES,
+            "functions": FUNCTIONS,
+            "operators": OPERATORS,
+            "tokens": TOKENS,
+            "per_field_ops": PER_FIELD_OPS,
+        }
+
+        if category is not None and category != "all" and category not in registries:
+            return create_error_response(
+                ValueError(
+                    f"Unknown category {category!r}. Valid: "
+                    f"{sorted(registries.keys()) + ['all']}"
+                ),
+                "describe_smartlist_dsl",
+                False,
+                start_time,
+            )
+
+        if name is not None:
+            search_in = [category] if category and category != "all" else list(registries.keys())
+            for cat in search_in:
+                reg = registries[cat]
+                if name in reg:
+                    return create_simple_response(
+                        data={"category": cat, "name": name, "description": reg[name]},
+                        summary_text=f"{name!r} ({cat})",
+                        api_endpoint="describe_smartlist_dsl",
+                        api_calls_made=0,
+                        debug=False,
+                        start_time=start_time,
+                    )
+            return create_error_response(
+                ValueError(
+                    f"Name {name!r} not found in "
+                    f"{search_in if len(search_in) > 1 else search_in[0]}"
+                ),
+                "describe_smartlist_dsl",
+                False,
+                start_time,
+            )
+
+        if category is None:
+            data = {
+                "categories": {
+                    cat: {"count": len(reg), "sample": list(reg.keys())[:8]}
+                    for cat, reg in registries.items()
+                },
+                "help_center": "https://help.amazingmarvin.com/en/articles/2070779-advanced-smart-list-filters",
+                "usage": "Call with category=<one of the keys> for a full dump, or name=<id> to look up a single entry.",
+            }
+            total = sum(len(r) for r in registries.values())
+            return create_simple_response(
+                data=data,
+                summary_text=f"DSL reference: {total} entries across {len(registries)} categories",
+                api_endpoint="describe_smartlist_dsl",
+                api_calls_made=0,
+                debug=False,
+                start_time=start_time,
+            )
+
+        data = registries if category == "all" else registries[category]
+        return create_simple_response(
+            data=data,
+            summary_text=f"DSL {category}: {sum(len(v) for v in data.values()) if category == 'all' else len(data)} entries",
+            api_endpoint="describe_smartlist_dsl",
+            api_calls_made=0,
+            debug=False,
+            start_time=start_time,
+        )
+    except Exception as e:
+        logger.exception("describe_smartlist_dsl failed")
+        return create_error_response(e, "describe_smartlist_dsl", False, start_time)
+
+
 def _full_access_configured() -> bool:
     try:
         from .config import get_settings

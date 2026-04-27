@@ -1191,10 +1191,10 @@ class TestDescribeDocType:
         names = [t.name for t in tools]
         assert "describe_doc_type" not in names
 
-    def test_all_14_doc_types_in_schemas(self):
+    def test_all_doc_types_in_schemas(self):
         from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS, VALID_DOC_TYPES
         assert set(DOC_TYPE_SCHEMAS.keys()) == VALID_DOC_TYPES
-        assert len(DOC_TYPE_SCHEMAS) == 14
+        assert len(DOC_TYPE_SCHEMAS) == 15
 
     def test_each_schema_has_required_keys(self):
         from amazing_marvin_mcp.doc_types import DOC_TYPE_SCHEMAS
@@ -1768,9 +1768,9 @@ class TestQueryDocsTool:
 
     def test_unknown_doc_type_returns_error(self):
         client = self._make_client()
-        result = self._run(client, doc_type="SmartLists")
+        result = self._run(client, doc_type="NotADocType")
         assert result.success is False
-        assert "SmartLists" in result.summary.text
+        assert "NotADocType" in result.summary.text
         client.find_docs.assert_not_called()
 
     # --- per-doc_type validation via build_selector ---
