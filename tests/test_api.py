@@ -761,16 +761,174 @@ class TestGetChildTasksTypeSplit:
         assert data["category_count"] == 1
         assert data["total_children"] == 3
 
+
+class TestGetChildTasksFieldProjection:
+    """fields=[...] must reach CouchDB find_docs (server-side projection).
+
+    Regression for the bug where get_child_tasks returned full documents on the
+    wire even with fields=[...] passed, while query_docs trimmed them. The
+    response must also no longer contain the redundant ``all_children`` key.
+    """
+
+    def _make_client(
+        self, children: list, has_couchdb: bool = True
+    ) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.has_couchdb = has_couchdb
+        client.find_docs.return_value = {"docs": children, "bookmark": None}
+        client.get_children.return_value = children
+        return client
+
     @patch("amazing_marvin_mcp.main.create_api_client")
-    def test_all_children_is_unmodified(self, mock_create: MagicMock) -> None:
-        """all_children must preserve raw API data — no type injection."""
-        children = [{"_id": "t1", "title": "A task"}]
-        mock_create.return_value = self._make_client(children)
+    def test_non_recursive_passes_fields_to_find_docs(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client(
+            [{"_id": "t1", "title": "A"}]
+        )
+        asyncio.run(get_child_tasks_tool("p1", fields=["title"]))
 
-        result = asyncio.run(get_child_tasks_tool("parent1"))
+        kwargs = mock_create.return_value.find_docs.call_args.kwargs
+        assert set(kwargs["fields"]) >= {"_id", "type", "title"}
 
-        raw = result.data["all_children"][0]
-        assert "type" not in raw
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_recursive_passes_fields_to_find_docs(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([])
+        asyncio.run(
+            get_child_tasks_tool("p1", recursive=True, fields=["title"])
+        )
+
+        kwargs = mock_create.return_value.find_docs.call_args.kwargs
+        assert set(kwargs["fields"]) >= {"_id", "type", "title"}
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_no_fields_means_no_projection(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([{"_id": "t1"}])
+        asyncio.run(get_child_tasks_tool("p1"))
+
+        kwargs = mock_create.return_value.find_docs.call_args.kwargs
+        assert kwargs.get("fields") is None
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_rest_fallback_trims_via_apply_fields(
+        self, mock_create: MagicMock
+    ) -> None:
+        children = [{"_id": "t1", "title": "A", "note": "long body"}]
+        mock_create.return_value = self._make_client(
+            children, has_couchdb=False
+        )
+        result = asyncio.run(get_child_tasks_tool("p1", fields=["title"]))
+
+        task = result.data["tasks"][0]
+        assert "note" not in task
+        assert task.get("title") == "A"
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_response_no_longer_contains_all_children(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([{"_id": "t1"}])
+        result = asyncio.run(get_child_tasks_tool("p1"))
+        assert "all_children" not in result.data
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_recursive_response_no_longer_contains_all_children(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([])
+        result = asyncio.run(get_child_tasks_tool("p1", recursive=True))
+        assert "all_children" not in result.data
+
+
+class TestGetChildTasksDoneFilter:
+    """Default-exclude done items; opt-in via include_done=True.
+
+    Aligns get_child_tasks with the project-wide convention used by
+    query_docs, search, and analytics.
+    """
+
+    def _make_client(
+        self, children: list, has_couchdb: bool = True
+    ) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.has_couchdb = has_couchdb
+        client.find_docs.return_value = {"docs": children, "bookmark": None}
+        client.get_children.return_value = children
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_default_excludes_done_via_selector(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([])
+        asyncio.run(get_child_tasks_tool("p1"))
+
+        selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
+        assert selector.get("done") == {"$ne": True}
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_include_done_true_drops_selector(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([])
+        asyncio.run(get_child_tasks_tool("p1", include_done=True))
+
+        selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
+        assert "done" not in selector
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_recursive_default_threads_done_filter(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([])
+        asyncio.run(get_child_tasks_tool("p1", recursive=True))
+
+        selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
+        assert selector.get("done") == {"$ne": True}
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_recursive_include_done_omits_filter(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = self._make_client([])
+        asyncio.run(get_child_tasks_tool("p1", recursive=True, include_done=True))
+
+        selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
+        assert "done" not in selector
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_rest_fallback_default_filters_done_client_side(
+        self, mock_create: MagicMock
+    ) -> None:
+        children = [
+            {"_id": "t1", "title": "open"},
+            {"_id": "t2", "title": "completed", "done": True},
+        ]
+        mock_create.return_value = self._make_client(children, has_couchdb=False)
+
+        result = asyncio.run(get_child_tasks_tool("p1"))
+
+        task_ids = [t["_id"] for t in result.data["tasks"]]
+        assert task_ids == ["t1"]
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_rest_fallback_include_done_keeps_done(
+        self, mock_create: MagicMock
+    ) -> None:
+        children = [
+            {"_id": "t1", "title": "open"},
+            {"_id": "t2", "title": "completed", "done": True},
+        ]
+        mock_create.return_value = self._make_client(children, has_couchdb=False)
+
+        result = asyncio.run(get_child_tasks_tool("p1", include_done=True))
+
+        task_ids = sorted(t["_id"] for t in result.data["tasks"])
+        assert task_ids == ["t1", "t2"]
 
 
 class TestDeleteDocumentTool:
@@ -2467,7 +2625,7 @@ class TestGetAllChildrenDb:
         child2 = {"_id": "c2", "title": "Child2", "type": "category"}
         grandchild1 = {"_id": "g1", "title": "Grandchild1", "type": "project"}
 
-        def side_effect(selector=None, limit=None):
+        def side_effect(selector=None, fields=None, limit=None):
             frontier = selector["parentId"]["$in"]
             if "root" in frontier:
                 return {"docs": [child1, child2]}
@@ -2482,7 +2640,7 @@ class TestGetAllChildrenDb:
         assert {d["_id"] for d in result} == {"c1", "c2", "g1"}
 
     def test_selector_includes_deleted_filter(self):
-        def side_effect(selector=None, limit=None):
+        def side_effect(selector=None, fields=None, limit=None):
             return {"docs": []}
 
         client = self._make_client(side_effect)
@@ -2496,7 +2654,7 @@ class TestGetAllChildrenDb:
         child1 = {"_id": "c1", "title": "Child1", "type": "project"}
         grandchild1 = {"_id": "g1", "title": "Grandchild"}
 
-        def side_effect(selector=None, limit=None):
+        def side_effect(selector=None, fields=None, limit=None):
             frontier = selector["parentId"]["$in"]
             if "root" in frontier:
                 return {"docs": [child1]}
@@ -2509,6 +2667,48 @@ class TestGetAllChildrenDb:
 
         ids = [d["_id"] for d in result]
         assert ids.count("g1") == 1
+
+    def test_forwards_fields_with_id_and_type_always_included(self):
+        """fields=[...] must reach find_docs with _id and type forced in."""
+
+        def side_effect(selector=None, fields=None, limit=None):
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        _get_all_children_db(client, "root", fields=["title"])
+
+        kwargs = client.find_docs.call_args.kwargs
+        assert set(kwargs["fields"]) >= {"_id", "type", "title"}
+
+    def test_no_fields_forwards_none_projection(self):
+        def side_effect(selector=None, fields=None, limit=None):
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        _get_all_children_db(client, "root")
+
+        kwargs = client.find_docs.call_args.kwargs
+        assert kwargs.get("fields") is None
+
+    def test_default_selector_excludes_done(self):
+        def side_effect(selector=None, fields=None, limit=None):
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        _get_all_children_db(client, "root")
+
+        selector = client.find_docs.call_args.kwargs["selector"]
+        assert selector.get("done") == {"$ne": True}
+
+    def test_include_done_omits_done_filter(self):
+        def side_effect(selector=None, fields=None, limit=None):
+            return {"docs": []}
+
+        client = self._make_client(side_effect)
+        _get_all_children_db(client, "root", include_done=True)
+
+        selector = client.find_docs.call_args.kwargs["selector"]
+        assert "done" not in selector
 
 
 class TestCreateProjectParentId:

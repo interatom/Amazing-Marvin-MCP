@@ -165,7 +165,11 @@ async def get_due_items(fields: list[str] | None = None, debug: bool = False) ->
 
 @mcp.tool()
 async def get_child_tasks(
-    parent_id: str, recursive: bool = False, fields: list[str] | None = None, debug: bool = False
+    parent_id: str,
+    recursive: bool = False,
+    fields: list[str] | None = None,
+    include_done: bool = False,
+    debug: bool = False,
 ) -> StandardResponse:
     """Get child tasks of a specific parent task or project (experimental).
 
@@ -176,6 +180,10 @@ async def get_child_tasks(
         parent_id: ID of the parent task or project
         recursive: If True, recursively get all descendants (can be expensive)
         fields: Optional list of field names to project. _id is always included. To access fields the REST API omits, use query_docs instead.
+        include_done: Include done=true items. Default False — done items are
+            excluded so listings reflect what's still actionable. Set True for
+            productivity stats / completion history (or use query_docs with
+            done_after for date-bounded queries).
 
     Note: This is an experimental endpoint and may not work for all parent types.
     """
@@ -183,19 +191,28 @@ async def get_child_tasks(
     try:
         api_client = create_api_client()
         if recursive:
-            result = get_child_tasks_recursive(api_client, parent_id)
+            result = get_child_tasks_recursive(
+                api_client, parent_id, fields=fields, include_done=include_done
+            )
             api_calls = result.get("api_calls_made", 3)  # Estimate for recursive calls
         else:
             if api_client.has_couchdb:
+                projection = list({"_id", "type", *fields}) if fields else None
+                selector: dict[str, Any] = {
+                    "parentId": parent_id,
+                    "deletedAt": {"$exists": False},
+                }
+                if not include_done:
+                    selector["done"] = {"$ne": True}
                 children = api_client.find_docs(
-                    selector={
-                        "parentId": parent_id,
-                        "deletedAt": {"$exists": False},
-                    },
+                    selector=selector,
+                    fields=projection,
                     limit=10000,
                 ).get("docs", [])
             else:
                 children = api_client.get_children(parent_id)
+                if not include_done:
+                    children = [c for c in children if not c.get("done")]
             # Categorize non-recursive results for consistency
             tasks = [
                 {**item, "type": "task"} if "type" not in item else item
@@ -214,16 +231,15 @@ async def get_child_tasks(
                 "task_count": len(tasks),
                 "project_count": len(projects),
                 "category_count": len(categories),
-                "all_children": children,
                 "recursive": False,
             }
             api_calls = 1
 
-        if fields:
+        # REST fallback only — CouchDB already projected server-side.
+        if fields and not api_client.has_couchdb:
             result["tasks"] = apply_fields(result.get("tasks", []), fields)
             result["projects"] = apply_fields(result.get("projects", []), fields)
             result["categories"] = apply_fields(result.get("categories", []), fields)
-            result["all_children"] = apply_fields(result.get("all_children", []), fields)
 
         return create_simple_response(
             data=result,

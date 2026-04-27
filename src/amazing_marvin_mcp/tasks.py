@@ -75,19 +75,32 @@ def _get_all_tasks_db(
 
 
 def _get_all_children_db(
-    api_client: MarvinAPIClient, parent_id: str
+    api_client: MarvinAPIClient,
+    parent_id: str,
+    fields: list[str] | None = None,
+    include_done: bool = False,
 ) -> list[dict[str, Any]]:
-    """BFS via CouchDB — O(depth) Mango queries instead of O(nodes) REST calls."""
+    """BFS via CouchDB — O(depth) Mango queries instead of O(nodes) REST calls.
+
+    When ``fields`` is given, ``_id`` and ``type`` are forced into the projection
+    so frontier classification still works. By default, done items are skipped
+    (and so are their sub-trees); pass ``include_done=True`` to traverse them.
+    """
     all_docs: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     frontier = [parent_id]
+    projection = list({"_id", "type", *fields}) if fields else None
 
     while frontier:
+        selector: dict[str, Any] = {
+            "parentId": {"$in": frontier},
+            "deletedAt": {"$exists": False},
+        }
+        if not include_done:
+            selector["done"] = {"$ne": True}
         result = api_client.find_docs(
-            selector={
-                "parentId": {"$in": frontier},
-                "deletedAt": {"$exists": False},
-            },
+            selector=selector,
+            fields=projection,
             limit=10000,
         )
         docs = result.get("docs", [])
@@ -256,13 +269,20 @@ def _get_all_children_recursive(
 
 
 def get_child_tasks_recursive(
-    api_client: MarvinAPIClient, parent_id: str
+    api_client: MarvinAPIClient,
+    parent_id: str,
+    fields: list[str] | None = None,
+    include_done: bool = False,
 ) -> dict[str, Any]:
     """Get child tasks recursively with comprehensive information."""
     if api_client.has_couchdb:
-        all_children = _get_all_children_db(api_client, parent_id)
+        all_children = _get_all_children_db(
+            api_client, parent_id, fields=fields, include_done=include_done
+        )
     else:
         all_children = _get_all_children_recursive(api_client, parent_id)
+        if not include_done:
+            all_children = [c for c in all_children if not c.get("done")]
 
     # Categorize children by type
     tasks = [
@@ -282,7 +302,6 @@ def get_child_tasks_recursive(
         "task_count": len(tasks),
         "project_count": len(projects),
         "category_count": len(categories),
-        "all_children": all_children,
         "recursive": True,
     }
 
