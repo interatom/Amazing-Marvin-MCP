@@ -860,6 +860,8 @@ class TestGetChildTasksDoneFilter:
         client.get_children.return_value = children
         return client
 
+    _NOT_DONE_OR = [{"done": {"$exists": False}}, {"done": {"$ne": True}}]
+
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_default_excludes_done_via_selector(
         self, mock_create: MagicMock
@@ -868,7 +870,7 @@ class TestGetChildTasksDoneFilter:
         asyncio.run(get_child_tasks_tool("p1"))
 
         selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
-        assert selector.get("done") == {"$ne": True}
+        assert selector.get("$or") == self._NOT_DONE_OR
 
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_include_done_true_drops_selector(
@@ -878,6 +880,7 @@ class TestGetChildTasksDoneFilter:
         asyncio.run(get_child_tasks_tool("p1", include_done=True))
 
         selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
+        assert "$or" not in selector
         assert "done" not in selector
 
     @patch("amazing_marvin_mcp.main.create_api_client")
@@ -888,7 +891,7 @@ class TestGetChildTasksDoneFilter:
         asyncio.run(get_child_tasks_tool("p1", recursive=True))
 
         selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
-        assert selector.get("done") == {"$ne": True}
+        assert selector.get("$or") == self._NOT_DONE_OR
 
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_recursive_include_done_omits_filter(
@@ -898,6 +901,7 @@ class TestGetChildTasksDoneFilter:
         asyncio.run(get_child_tasks_tool("p1", recursive=True, include_done=True))
 
         selector = mock_create.return_value.find_docs.call_args.kwargs["selector"]
+        assert "$or" not in selector
         assert "done" not in selector
 
     @patch("amazing_marvin_mcp.main.create_api_client")
@@ -1538,20 +1542,37 @@ class TestBuildSelector:
 
     # --- completion exclusion ---
 
-    def test_include_done_false_adds_done_ne_true_for_tasks(self):
+    _NOT_DONE_FRAG = {
+        "$or": [{"done": {"$exists": False}}, {"done": {"$ne": True}}]
+    }
+
+    def test_include_done_false_adds_not_done_or_for_tasks(self):
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Tasks")
-        assert self._has_frag(sel, "done", {"$ne": True})
+        assert self._NOT_DONE_FRAG in self._get_frags(sel)
 
-    def test_include_done_false_adds_done_ne_true_for_categories(self):
+    def test_include_done_false_adds_not_done_or_for_categories(self):
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Categories")
-        assert self._has_frag(sel, "done", {"$ne": True})
+        assert self._NOT_DONE_FRAG in self._get_frags(sel)
 
-    def test_include_done_false_adds_done_ne_true_for_goals(self):
+    def test_include_done_false_adds_not_done_or_for_goals(self):
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Goals")
-        assert self._has_frag(sel, "done", {"$ne": True})
+        assert self._NOT_DONE_FRAG in self._get_frags(sel)
+
+    def test_include_done_false_matches_docs_missing_done_field(self):
+        # Regression: Mango {"done": {"$ne": True}} alone excludes docs without
+        # a `done` field at all (CouchDB quirk). Imported tasks have no `done`,
+        # so the OR-with-$exists wrapper is required to surface them.
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks")
+        frags = self._get_frags(sel)
+        done_frags = [f for f in frags if "$or" in f and any(
+            "done" in clause for clause in f["$or"]
+        )]
+        assert len(done_frags) == 1
+        assert {"done": {"$exists": False}} in done_frags[0]["$or"]
 
     def test_include_done_true_omits_done_fragment_for_goals(self):
         from amazing_marvin_mcp.db_filters import build_selector
@@ -1603,9 +1624,13 @@ class TestBuildSelector:
     def test_has_due_date_false(self):
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Tasks", has_due_date=False)
-        v = self._get_frag(sel, "$or")
-        assert v is not None
-        keys = [list(clause.keys())[0] for clause in v]
+        or_frags = [f["$or"] for f in self._get_frags(sel) if "$or" in f]
+        due_or = [
+            o for o in or_frags
+            if any("dueDate" in clause for clause in o)
+        ]
+        assert due_or, f"Expected an $or with a dueDate clause; got {or_frags}"
+        keys = [list(clause.keys())[0] for clause in due_or[0]]
         assert "dueDate" in keys
 
     def test_has_note_true(self):
@@ -1799,10 +1824,14 @@ class TestBuildSelector:
     def test_contains_escapes_special_regex_chars(self):
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Tasks", contains="hello.world+")
-        frags = self._get_frags(sel)
-        or_frags = [f["$or"] for f in frags if "$or" in f]
+        or_frags = [f["$or"] for f in self._get_frags(sel) if "$or" in f]
+        title_or = [
+            o for o in or_frags
+            if any("title" in clause for clause in o)
+        ]
+        assert title_or, "Expected an $or with a title regex clause"
+        regex = title_or[0][0]["title"]["$regex"]
         # Special chars should be escaped so they don't act as regex operators
-        regex = or_frags[0][0]["title"]["$regex"]
         assert r"\." in regex
         assert r"\+" in regex
 
@@ -2698,7 +2727,10 @@ class TestGetAllChildrenDb:
         _get_all_children_db(client, "root")
 
         selector = client.find_docs.call_args.kwargs["selector"]
-        assert selector.get("done") == {"$ne": True}
+        assert selector.get("$or") == [
+            {"done": {"$exists": False}},
+            {"done": {"$ne": True}},
+        ]
 
     def test_include_done_omits_done_filter(self):
         def side_effect(selector=None, fields=None, limit=None):
@@ -2709,6 +2741,7 @@ class TestGetAllChildrenDb:
 
         selector = client.find_docs.call_args.kwargs["selector"]
         assert "done" not in selector
+        assert "$or" not in selector
 
 
 class TestCreateProjectParentId:

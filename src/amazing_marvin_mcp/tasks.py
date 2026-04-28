@@ -6,6 +6,7 @@ from typing import Any
 
 from .api import MarvinAPIClient
 from .date_utils import DateUtils
+from .db_filters import not_equal_or_missing
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def _get_all_tasks_db(
         "$and": [
             {"db": "Tasks"},
             {"deletedAt": {"$exists": False}},
-            {"done": {"$ne": True}},
+            not_equal_or_missing("done", True),
         ]
     }
     if label_id:
@@ -97,7 +98,7 @@ def _get_all_children_db(
             "deletedAt": {"$exists": False},
         }
         if not include_done:
-            selector["done"] = {"$ne": True}
+            selector.update(not_equal_or_missing("done", True))
         result = api_client.find_docs(
             selector=selector,
             fields=projection,

@@ -25,6 +25,17 @@ def _falsy_flag(field: str) -> dict:
     return {"$or": [{field: {"$exists": False}}, {field: {"$in": [False, 0, None]}}]}
 
 
+def not_equal_or_missing(field: str, value: object) -> dict:
+    """Mango selector matching docs where ``field`` is missing or != ``value``.
+
+    Plain ``{"field": {"$ne": value}}`` excludes docs without the field — a
+    CouchDB Mango quirk. This helper wraps the field-absent case explicitly,
+    so docs with no ``field`` at all (e.g. an imported Task with no ``done``
+    flag) are treated as "not equal to value".
+    """
+    return {"$or": [{field: {"$exists": False}}, {field: {"$ne": value}}]}
+
+
 def _exists_nonempty(field: str, extra_empty: list | None = None) -> dict:
     nin = [None, ""]
     if extra_empty:
@@ -89,7 +100,7 @@ def build_selector(doc_type: str, **filters) -> dict:
 
     # Completion exclusion — Tasks, Categories, and Goals carry the done field
     if doc_type in ("Tasks", "Categories", "Goals") and not filters.get("include_done", False):
-        frags.append({"done": {"$ne": True}})
+        frags.append(not_equal_or_missing("done", True))
 
     # Label any-of (resolved IDs)
     label_ids = filters.get("label_ids")
@@ -188,7 +199,7 @@ def build_selector(doc_type: str, **filters) -> dict:
     if project_type == "project":
         frags.append({"type": "project"})
     elif project_type == "category":
-        frags.append({"$or": [{"type": {"$exists": False}}, {"type": {"$ne": "project"}}]})
+        frags.append(not_equal_or_missing("type", "project"))
 
     # is_starred (Tasks only — validated above)
     is_starred = filters.get("is_starred")

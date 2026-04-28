@@ -17,6 +17,7 @@ from .analytics import (
 )
 from .api import create_api_client
 from .date_utils import DateUtils
+from .db_filters import not_equal_or_missing
 from .models import TaskUpdateRequest
 from .setters_builder import build_setters
 from .projects import (
@@ -203,7 +204,7 @@ async def get_child_tasks(
                     "deletedAt": {"$exists": False},
                 }
                 if not include_done:
-                    selector["done"] = {"$ne": True}
+                    selector.update(not_equal_or_missing("done", True))
                 children = api_client.find_docs(
                     selector=selector,
                     fields=projection,
