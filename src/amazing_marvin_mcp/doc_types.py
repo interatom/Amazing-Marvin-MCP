@@ -89,7 +89,9 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "deletedAt docs excluded by default — use include_deleted=True to include them",
             "Manual ordering is per-view, not a single field: masterRank orders "
             "siblings in the Master List / category tree, rank orders the Day/Week "
-            "planner view, and rank_<smartListId> orders a specific SmartList. Ranks "
+            "planner view, and rank_<smartListId> orders a specific SmartList. When "
+            "a view's own rank field is absent/non-numeric, ordering falls back to "
+            "masterRank, then rank, then the item's current list position. Ranks "
             "are fractional (a reorder sets a value between its neighbours), so they "
             "are floats, not contiguous integers. No reorder tool exists and "
             "update_task cannot set them — write rank/masterRank via update_document "
