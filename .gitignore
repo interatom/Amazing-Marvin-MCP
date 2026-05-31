@@ -2,3 +2,6 @@ build
 dist
 src/amazing_marvin_mcp.egg-info
 **/__pycache__
+
+# Local working files, not part of the package
+research/

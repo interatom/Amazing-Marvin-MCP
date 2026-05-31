@@ -41,8 +41,9 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "recurring": "boolean (true when this task instance was generated from a RecurringTasks template)",
             "recurringTaskId": "string (when recurring=true, the _id of the source RecurringTasks template)",
             "subtasks": "object (embedded subtasks keyed by their _id — NOT separate documents)",
-            "rank": "number (sort order within parent)",
-            "masterRank": "number (master sort order across all docs)",
+            "rank": "number (manual sort order in the Day/Week planner view)",
+            "masterRank": "number (manual sort order among siblings in the Master List / category tree)",
+            "rank_<smartListId>": "number (manual sort order within a specific SmartList; field name is per-list, e.g. 'rank_abc123')",
             "reminder": "object | null (reminder configuration when set)",
             "remindAt": "number | null (epoch ms when the reminder fires)",
             "sectionId": "string (planner / time-block section assignment; '' if unset)",
@@ -86,6 +87,13 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "Recurring task instances are separate from their RecurringTasks templates",
             "done=true tasks excluded by default — use include_done=True to include them",
             "deletedAt docs excluded by default — use include_deleted=True to include them",
+            "Manual ordering is per-view, not a single field: masterRank orders "
+            "siblings in the Master List / category tree, rank orders the Day/Week "
+            "planner view, and rank_<smartListId> orders a specific SmartList. Ranks "
+            "are fractional (a reorder sets a value between its neighbours), so they "
+            "are floats, not contiguous integers. No reorder tool exists and "
+            "update_task cannot set them — write rank/masterRank via update_document "
+            "with explicit setters.",
         ],
         "examples": [
             'query_docs(doc_type="Tasks", parent_id="unassigned")  # inbox tasks',
@@ -105,8 +113,8 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "priority": "string ('low', 'mid', 'high')",
             "color": "string (hex color, e.g. '#5b9dff')",
             "icon": "string (icon name)",
-            "rank": "number (sort order within parent)",
-            "masterRank": "number (master sort order)",
+            "rank": "number (manual sort order in the Day/Week planner view)",
+            "masterRank": "number (manual sort order among siblings in the Master List / category tree)",
             "done": "boolean",
             "doneDate": "string (YYYY-MM-DD)",
             "day": "string (YYYY-MM-DD or 'unassigned'; projects can be scheduled like tasks)",
