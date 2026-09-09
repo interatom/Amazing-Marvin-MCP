@@ -257,8 +257,22 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "labelIds": "array of string",
             "done": "boolean",
             "hasEnd": "boolean (true if the goal has a target end date)",
-            "status": "string (goal lifecycle status, e.g. 'active', 'completed', 'abandoned', 'pending')",
+            "status": "string (goal lifecycle: 'pending' = created and started, 'backburner' = parked, 'active' = worksheet filled in, 'done' = completed)",
             "sections": "array of {_id, title} (Goal Phases / milestones; the UI calls these 'sections' but they are unrelated to project sections)",
+            "dueDate": "string (YYYY-MM-DD) | null (target date; null whenever hasEnd is false)",
+            "parentId": "string ('unassigned' or a Categories _id)",
+            "isStarred": "boolean | number (1/2/3 for priority tiers)",
+            "hideInDayView": "boolean (keep the goal out of the day view)",
+            "doneAt": "number | null (epoch ms when the goal was completed)",
+            "startedAt": "number (epoch ms when the goal first became active)",
+            "committed": "boolean (set from the goal worksheet; cleared when parked)",
+            "difficulty": "string | null (goal worksheet)",
+            "importance": "string | null (goal worksheet)",
+            "motivations": "array (goal worksheet)",
+            "challenges": "array (goal worksheet)",
+            "color": "string (goal colour used by the goal SmartList)",
+            "taskProgress": "boolean (count task completion towards progress)",
+            "trackerProgress_<trackerId>": "value (per-tracker contribution to progress; field name is per-tracker)",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
             "createdAt": "number (epoch ms)",
             "updatedAt": "number (epoch ms)",
@@ -278,9 +292,13 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "the goal itself. To find a goal's members, query tasks/categories "
             "where g_in_<goalId> is truthy, or use the SmartLists DSL "
             "predicates inGoal / *inGoal.",
-            "Goals are constructed permissively (no canonical default-doc "
-            "factory), so optional fields like hasEnd / status may be absent on "
-            "older goal documents.",
+            "A new goal starts as 'pending' or 'backburner' and carries "
+            "hasEnd, dueDate, parentId, isStarred, hideInDayView, labelIds and "
+            "one default phase in 'sections'. Older documents predate parts of "
+            "that set, so treat every optional field as possibly absent. Use "
+            "create_goal rather than writing a goal document by hand.",
+            "The 'done' boolean is legacy: completion is recorded as "
+            "status='done' plus doneAt, not by setting done=true.",
             "A goal's 'sections' array contains Goal Phases (the milestones "
             "shown in the goal overlay UI), each {_id, title}. These are "
             "NOT project sections / DSL !SectionName matches; that's a "
