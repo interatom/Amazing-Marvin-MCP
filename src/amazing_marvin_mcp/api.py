@@ -173,9 +173,18 @@ class MarvinAPIClient:
         )
 
     def create_document(self, doc_data: dict) -> dict:
-        """Create a raw document. Warning: can create malformed tasks. Not exposed as MCP tool."""
+        """Create a raw document. Warning: can create malformed tasks. Not exposed as MCP tool.
+
+        The document is sent as the request body itself, not wrapped in an
+        envelope. A wrapped body is accepted with 200 and echoed back, but
+        nothing is stored — so callers must not treat a 200 as proof of
+        creation. Read the document back by its _id to confirm.
+
+        The endpoint stores what it is given: no validation, no defaults, no
+        server-generated _id. Callers supply _id and any required fields.
+        """
         return self._make_request(
-            "post", "/doc/create", data={"doc": doc_data}, use_full_access=True
+            "post", "/doc/create", data=doc_data, use_full_access=True
         )
 
     def delete_document(self, item_id: str) -> dict:

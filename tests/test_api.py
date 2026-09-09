@@ -518,14 +518,24 @@ class TestFullAccessToken:
         )
 
     @patch("requests.post")
-    def test_create_document_sends_correct_payload(self, mock_post: MagicMock):
+    def test_create_document_sends_document_as_body(self, mock_post: MagicMock):
         mock_post.return_value = self._mock_response({"_id": "new1"})
-        self._client("tok").create_document({"title": "Raw"})
+        self._client("tok").create_document({"_id": "new1", "title": "Raw"})
         mock_post.assert_called_once_with(
             f"{self.BASE_URL}/doc/create",
             headers={"X-Full-Access-Token": "tok"},
-            json={"doc": {"title": "Raw"}},
+            json={"_id": "new1", "title": "Raw"},
         )
+
+    @patch("requests.post")
+    def test_create_document_does_not_wrap_body_in_envelope(self, mock_post: MagicMock):
+        """A wrapped body is accepted with 200 but stores nothing, so it must
+        never be sent."""
+        mock_post.return_value = self._mock_response({"_id": "new1"})
+        self._client("tok").create_document({"title": "Raw"})
+        sent = mock_post.call_args.kwargs["json"]
+        assert "doc" not in sent
+        assert sent == {"title": "Raw"}
 
     @patch("requests.post")
     def test_delete_document_sends_correct_payload(self, mock_post: MagicMock):
