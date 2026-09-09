@@ -416,6 +416,25 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "rewardPoints": "number",
             "taskTime": "string | null (HH:MM; default time-of-day on generated instances)",
             "reminderOffset": "number | null (offset for auto-reminders on generated instances)",
+            "dailySection": "string (Daily Structure section for generated instances)",
+            "bonusSection": "string (Bonus Structure section for generated instances)",
+            "customSection": "string (custom section for generated instances)",
+            "timeBlockSection": "string (time block section for generated instances)",
+            "priority": "string (priority carried to generated instances)",
+            "mentalWeight": "number (carried to generated instances)",
+            "positiveEnergy": "number (carried to generated instances)",
+            "focusLevel": "number (carried to generated instances)",
+            "energyAmount": "number (carried to generated instances)",
+            "isPhysical": "boolean (carried to generated instances)",
+            "orbit": "value (Orbit assignment carried to generated instances)",
+            "textStyle": "value (text styling carried to generated instances)",
+            "subtasks": "object (embedded subtasks carried to generated instances)",
+            "masterRank": "number (manual sort order among templates)",
+            "scheduleIn": "number | null (days offset for the scheduled day)",
+            "autoPlan": "value (client-side planning behaviour; leave to the client)",
+            "autoSnooze": "value (client-side snooze behaviour; leave to the client)",
+            "snooze": "value (client-side snooze state; leave to the client)",
+            "permaSnoozeTime": "value (client-side snooze state; leave to the client)",
             "deletedAt": "number (epoch ms, present only when soft-deleted)",
             "createdAt": "number (epoch ms)",
             "updatedAt": "number (epoch ms)",
@@ -441,6 +460,12 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "'type' is the recurrence pattern, NOT the projects/categories type. "
             "Common values: 'daily', 'repeat week', 'n per week', 'monthly', "
             "'repeat month', 'repeat year', 'echo'.",
+            "day / date / weekDays are derived from repeatStart, not independent "
+            "settings — write them consistently with the anchor or let "
+            "create_recurring_task derive them.",
+            "autoPlan, autoSnooze, snooze, permaSnoozeTime and masterRank are set "
+            "by the client from context an API caller does not have. Leave them "
+            "alone unless mirroring an existing template.",
         ],
         "examples": [
             'query_docs(doc_type="RecurringTasks")  # all recurring task templates',
