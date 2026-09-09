@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from pydantic import ValidationError
 
+from amazing_marvin_mcp.main import create_goal as create_goal_tool
 from amazing_marvin_mcp.main import create_project as create_project_tool
 from amazing_marvin_mcp.main import create_project_with_tasks as create_project_with_tasks_tool
 from amazing_marvin_mcp.main import delete_document as delete_document_tool
@@ -17,6 +19,7 @@ from amazing_marvin_mcp.main import get_completed_tasks_for_date
 from amazing_marvin_mcp.main import get_goals
 from amazing_marvin_mcp.main import get_labels
 from amazing_marvin_mcp.main import get_tasks
+from amazing_marvin_mcp.models import GoalCreateRequest
 from amazing_marvin_mcp.analytics import (
     _get_daily_productivity_db,
     get_completed_tasks,
@@ -536,6 +539,16 @@ class TestFullAccessToken:
         sent = mock_post.call_args.kwargs["json"]
         assert "doc" not in sent
         assert sent == {"title": "Raw"}
+
+    @patch("requests.post")
+    def test_create_goal_sends_document_as_body(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"_id": "g1"})
+        self._client("tok").create_goal({"_id": "g1", "db": "Goals", "title": "Ship it"})
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/doc/create",
+            headers={"X-Full-Access-Token": "tok"},
+            json={"_id": "g1", "db": "Goals", "title": "Ship it"},
+        )
 
     @patch("requests.post")
     def test_delete_document_sends_correct_payload(self, mock_post: MagicMock):
@@ -2796,3 +2809,125 @@ class TestCreateProjectParentId:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestGoalCreateRequest:
+    """The document built for /doc/create must be complete — the endpoint
+    applies no defaults of its own."""
+
+    def test_defaults_match_a_client_created_goal(self):
+        doc = GoalCreateRequest(title="Learn Rust", has_end=False).to_document()
+
+        assert doc["db"] == "Goals"
+        assert doc["title"] == "Learn Rust"
+        assert doc["status"] == "pending"
+        assert doc["parentId"] == "unassigned"
+        assert doc["isStarred"] == 0
+        assert doc["labelIds"] == []
+        assert doc["hideInDayView"] is False
+        assert doc["sections"] == [{"_id": "d", "title": ""}]
+        assert doc["fieldUpdates"] == {}
+        assert isinstance(doc["createdAt"], int)
+
+    def test_id_is_generated_in_marvin_format(self):
+        doc = GoalCreateRequest(title="x", has_end=False).to_document()
+        assert len(doc["_id"]) == 20
+        # The alphabet omits visually ambiguous characters.
+        assert not set(doc["_id"]) & set("01IOUVl")
+
+    def test_ids_are_unique(self):
+        ids = {
+            GoalCreateRequest(title="x", has_end=False).to_document()["_id"]
+            for _ in range(50)
+        }
+        assert len(ids) == 50
+
+    def test_due_date_is_dropped_for_an_ongoing_goal(self):
+        doc = GoalCreateRequest(
+            title="x", has_end=False, due_date="2026-12-31"
+        ).to_document()
+        assert doc["dueDate"] is None
+
+    def test_due_date_is_kept_for_a_goal_with_an_end(self):
+        doc = GoalCreateRequest(
+            title="x", has_end=True, due_date="2026-12-31"
+        ).to_document()
+        assert doc["dueDate"] == "2026-12-31"
+
+    def test_explicit_sections_win_over_the_default_phase(self):
+        doc = GoalCreateRequest(
+            title="x", has_end=False, sections=[{"_id": "a", "title": "Phase 1"}]
+        ).to_document()
+        assert doc["sections"] == [{"_id": "a", "title": "Phase 1"}]
+
+    def test_empty_title_is_rejected(self):
+        with pytest.raises(ValidationError):
+            GoalCreateRequest(title="", has_end=False)
+
+    def test_has_end_is_required(self):
+        with pytest.raises(ValidationError):
+            GoalCreateRequest(title="x")
+
+    def test_lifecycle_states_are_not_creatable(self):
+        for status in ("active", "done", "completed", "abandoned"):
+            with pytest.raises(ValidationError):
+                GoalCreateRequest(title="x", has_end=False, status=status)
+
+
+class TestCreateGoalTool:
+    """The tool must confirm the goal exists before reporting success."""
+
+    @staticmethod
+    def _client(stored: Any) -> MagicMock:
+        client = MagicMock()
+        client.create_goal.return_value = {"ok": True}
+        client.get_document.return_value = stored
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_created_goal_is_read_back(self, mock_create: MagicMock) -> None:
+        client = self._client({"_id": "placeholder", "title": "Ship it"})
+        mock_create.return_value = client
+
+        # The generated ID is only known once the document is built, so mirror
+        # it into the read-back stub.
+        def create_goal(document: dict[str, Any]) -> dict[str, Any]:
+            client.get_document.return_value = {**document, "_rev": "1-abc"}
+            return {"ok": True}
+
+        client.create_goal.side_effect = create_goal
+
+        result = asyncio.run(create_goal_tool(title="Ship it", has_end=False))
+
+        sent = client.create_goal.call_args.args[0]
+        assert sent["db"] == "Goals"
+        assert sent["title"] == "Ship it"
+        client.get_document.assert_called_once_with(sent["_id"])
+        assert result.data["created_goal"]["_id"] == sent["_id"]
+        assert result.success is True
+        assert "Created goal: Ship it" in result.summary.text
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_silent_no_op_is_reported_as_an_error(self, mock_create: MagicMock) -> None:
+        """A 200 that stores nothing must not be reported as success."""
+        client = self._client({})
+        mock_create.return_value = client
+
+        result = asyncio.run(create_goal_tool(title="Ship it", has_end=False))
+
+        assert result.success is False
+        assert result.summary.status == "error"
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_invalid_status_does_not_reach_the_api(
+        self, mock_create: MagicMock
+    ) -> None:
+        client = self._client({})
+        mock_create.return_value = client
+
+        result = asyncio.run(
+            create_goal_tool(title="Ship it", has_end=False, status="done")
+        )
+
+        assert result.success is False
+        client.create_goal.assert_not_called()

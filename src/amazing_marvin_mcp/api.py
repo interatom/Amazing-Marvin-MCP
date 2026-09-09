@@ -187,6 +187,15 @@ class MarvinAPIClient:
             "post", "/doc/create", data=doc_data, use_full_access=True
         )
 
+    def create_goal(self, goal_data: dict) -> dict:
+        """Create a Goal document (requires full-access token).
+
+        goal_data must be a complete document including '_id' and
+        'db': 'Goals'. Build it with GoalCreateRequest.to_document() rather
+        than by hand — the endpoint applies no defaults of its own.
+        """
+        return self.create_document(goal_data)
+
     def delete_document(self, item_id: str) -> dict:
         """Permanently delete a document."""
         return self._make_request(

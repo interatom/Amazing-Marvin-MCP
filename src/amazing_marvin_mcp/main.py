@@ -18,7 +18,7 @@ from .analytics import (
 from .api import create_api_client
 from .date_utils import DateUtils
 from .db_filters import not_equal_or_missing
-from .models import TaskUpdateRequest
+from .models import GoalCreateRequest, TaskUpdateRequest
 from .setters_builder import build_setters
 from .projects import (
     create_project_with_tasks as create_project_impl,
@@ -355,6 +355,80 @@ async def update_document(
     except Exception as e:
         logger.exception("Failed to update document %s", item_id)
         return create_error_response(e, "/doc/update", debug, start_time)
+
+
+async def create_goal(
+    title: str,
+    has_end: bool,
+    due_date: str | None = None,
+    note: str | None = None,
+    label_ids: list[str] | None = None,
+    parent_id: str = "unassigned",
+    is_starred: int = 0,
+    hide_in_day_view: bool = False,
+    status: str = "pending",
+    sections: list[dict[str, Any]] | None = None,
+    debug: bool = False,
+) -> StandardResponse:
+    """Create a goal (requires AMAZING_MARVIN_FULL_ACCESS_TOKEN).
+
+    Args:
+        title: Goal name.
+        has_end: True for a goal with a target date, False for an ongoing one.
+            Required — Marvin will not create a goal without this answer.
+        due_date: Target date YYYY-MM-DD. Ignored when has_end is False.
+        note: Markdown note.
+        label_ids: Label IDs to attach.
+        parent_id: Owning category ID, or 'unassigned' (default).
+        is_starred: Priority tier 0-3.
+        hide_in_day_view: Keep the goal out of the day view.
+        status: 'pending' (default, the goal is started) or 'backburner'.
+        sections: Goal Phases, each {_id, title}. Defaults to one empty phase.
+
+    A goal reaches 'active' once its worksheet is filled in and 'done' on
+    completion; both are updates, not part of creating it. Goal membership
+    lives on the member documents as 'g_in_<goalId>', so assign tasks or
+    projects to the new goal with update_document afterwards.
+    """
+    start_time = time.time()
+    try:
+        api_client = create_api_client()
+        goal_req = GoalCreateRequest(
+            title=title,
+            has_end=has_end,
+            due_date=due_date,
+            note=note,
+            label_ids=label_ids or [],
+            parent_id=parent_id,
+            is_starred=is_starred,
+            hide_in_day_view=hide_in_day_view,
+            status=status,  # type: ignore[arg-type]
+            sections=sections,
+        )
+        document = goal_req.to_document()
+        goal_id = document["_id"]
+        api_client.create_goal(document)
+
+        # /doc/create answers 200 even when it stores nothing, so confirm the
+        # goal exists before reporting success.
+        stored = api_client.get_document(goal_id)
+        if not isinstance(stored, dict) or stored.get("_id") != goal_id:
+            raise RuntimeError(
+                f"Goal {goal_id} was not stored — the create request was accepted but "
+                "the document cannot be read back."
+            )
+
+        return create_simple_response(
+            data={"created_goal": stored},
+            summary_text=f"Created goal: {title}",
+            api_endpoint="/doc/create",
+            api_calls_made=2,
+            debug=debug,
+            start_time=start_time,
+        )
+    except Exception as e:
+        logger.exception("Failed to create goal '%s'", title)
+        return create_error_response(e, "/doc/create", debug, start_time)
 
 
 async def delete_document(item_id: str, debug: bool = False) -> StandardResponse:
@@ -1589,6 +1663,7 @@ if _full_access_configured():
     update_document = mcp.tool()(update_document)
     delete_document = mcp.tool()(delete_document)
     update_task = mcp.tool()(update_task)
+    create_goal = mcp.tool()(create_goal)
 
 
 def _couchdb_configured() -> bool:
