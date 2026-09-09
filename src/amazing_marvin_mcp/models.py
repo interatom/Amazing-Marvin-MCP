@@ -35,7 +35,7 @@ class TaskUpdateRequest(BaseModel):
 
 
 class GoalCreateRequest(BaseModel):
-    """Input for create_goal — mirrors the field set Marvin writes for a new goal.
+    """Input for create_goal — mirrors the field set Marvin writes for a new goal.
 
     Goals are created in one of two states: 'pending' (started, ready to be
     worked out) or 'backburner'. The remaining lifecycle states ('active' once
@@ -47,7 +47,7 @@ class GoalCreateRequest(BaseModel):
     has_end: bool = Field(
         ...,
         description="True for a goal with a target date, False for an ongoing one. "
-        "Required — Marvin refuses to create a goal without this answer.",
+        "Required — Marvin refuses to create a goal without this answer.",
     )
     due_date: str | None = Field(
         default=None,
@@ -76,7 +76,7 @@ class GoalCreateRequest(BaseModel):
         """Build the document to send to /doc/create.
 
         The endpoint stores verbatim, so every field Marvin's own client would
-        set is filled in here — including the _id, the creation timestamp and
+        set is filled in here — including the _id, the creation timestamp and
         the empty per-field update map used for conflict resolution.
         """
         return {
@@ -114,7 +114,7 @@ RECURRENCE_TYPES = (
 
 
 class RecurringTaskCreateRequest(BaseModel):
-    """Input for create_recurring_task — a template, not an occurrence.
+    """Input for create_recurring_task — a template, not an occurrence.
 
     Marvin's client generates the occurrences from this document; never build
     one by hand, their IDs are derived from the template and would collide.

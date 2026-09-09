@@ -177,7 +177,7 @@ class MarvinAPIClient:
 
         The document is sent as the request body itself, not wrapped in an
         envelope. A wrapped body is accepted with 200 and echoed back, but
-        nothing is stored — so callers must not treat a 200 as proof of
+        nothing is stored — so callers must not treat a 200 as proof of
         creation. Read the document back by its _id to confirm.
 
         The endpoint stores what it is given: no validation, no defaults, no
@@ -192,7 +192,7 @@ class MarvinAPIClient:
 
         goal_data must be a complete document including '_id' and
         'db': 'Goals'. Build it with GoalCreateRequest.to_document() rather
-        than by hand — the endpoint applies no defaults of its own.
+        than by hand — the endpoint applies no defaults of its own.
         """
         return self.create_document(goal_data)
 

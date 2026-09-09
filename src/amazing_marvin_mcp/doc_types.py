@@ -461,7 +461,7 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "Common values: 'daily', 'repeat week', 'n per week', 'monthly', "
             "'repeat month', 'repeat year', 'echo'.",
             "day / date / weekDays are derived from repeatStart, not independent "
-            "settings — write them consistently with the anchor or let "
+            "settings — write them consistently with the anchor or let "
             "create_recurring_task derive them.",
             "autoPlan, autoSnooze, snooze, permaSnoozeTime and masterRank are set "
             "by the client from context an API caller does not have. Leave them "

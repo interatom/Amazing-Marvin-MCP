@@ -2827,7 +2827,7 @@ if __name__ == "__main__":
 
 
 class TestGoalCreateRequest:
-    """The document built for /doc/create must be complete — the endpoint
+    """The document built for /doc/create must be complete — the endpoint
     applies no defaults of its own."""
 
     def test_defaults_match_a_client_created_goal(self):
