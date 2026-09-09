@@ -29,7 +29,7 @@ from amazing_marvin_mcp.analytics import (
     get_daily_productivity_overview,
     get_productivity_summary,
 )
-from amazing_marvin_mcp.api import MarvinAPIClient, create_api_client
+from amazing_marvin_mcp.api import MarvinAPIClient
 from amazing_marvin_mcp.config import get_settings
 from amazing_marvin_mcp.projects import create_project_with_tasks
 from amazing_marvin_mcp.response_models import Reference
@@ -391,13 +391,15 @@ class TestParentIdResolution:
 
 
 class TestProjectPlanningEnhancements:
-    """Test the new project planning enhancement features."""
+    """Live API tests for the project planning helpers.
 
-    def test_create_project_with_tasks(self, test_project_data):
+    Two of these write to the account, so they run only when an API key is
+    configured; the api_client fixture skips them otherwise.
+    """
+
+    def test_create_project_with_tasks(self, api_client, test_project_data):
         """Test creating a project with multiple tasks at once."""
 
-        # Use test data
-        api_client = create_api_client()
         task_titles = [f"Test Task {i + 1}" for i in range(TASK_COUNT)]
         result = create_project_with_tasks(
             api_client,
@@ -409,10 +411,9 @@ class TestProjectPlanningEnhancements:
         assert result["task_count"] == TASK_COUNT
         assert len(result["created_tasks"]) == TASK_COUNT
 
-    def test_get_daily_focus(self):
+    def test_get_daily_focus(self, api_client):
         """Test getting daily focus items."""
 
-        api_client = create_api_client()
         result = get_daily_focus(api_client)
 
         assert "total_focus_items" in result
@@ -422,20 +423,18 @@ class TestProjectPlanningEnhancements:
         assert "projects" in result
         assert "tasks" in result
 
-    def test_get_productivity_summary(self):
+    def test_get_productivity_summary(self, api_client):
         """Test getting productivity summary."""
 
-        api_client = create_api_client()
         result = get_productivity_summary(api_client)
 
         assert "date" in result
         assert "active_goals" in result
         assert "summary" in result
 
-    def test_quick_daily_planning(self):
+    def test_quick_daily_planning(self, api_client):
         """Test quick daily planning feature."""
 
-        api_client = create_api_client()
         result = quick_daily_planning(api_client)
 
         assert "planning_date" in result
@@ -444,11 +443,9 @@ class TestProjectPlanningEnhancements:
         assert "suggestions" in result
         assert isinstance(result["suggestions"], list)
 
-    def test_batch_create_tasks(self):
+    def test_batch_create_tasks(self, api_client):
         """Test batch task creation."""
 
-        # Create test tasks
-        api_client = create_api_client()
         tasks = ["Test Task 1", "Test Task 2", "Test Task 3"]
         result = batch_create_tasks(api_client, tasks)
 
