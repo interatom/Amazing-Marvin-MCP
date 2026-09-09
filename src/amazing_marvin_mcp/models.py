@@ -1,6 +1,7 @@
 """Pydantic request models for Amazing Marvin MCP operations."""
 
 import time
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -53,7 +54,9 @@ class GoalCreateRequest(BaseModel):
         description="Target date YYYY-MM-DD. Ignored (stored as null) when has_end is False.",
     )
     note: str | None = Field(default=None, description="Markdown note")
-    label_ids: list[str] = Field(default_factory=list, description="Label IDs to attach")
+    label_ids: list[str] = Field(
+        default_factory=list, description="Label IDs to attach"
+    )
     parent_id: str = Field(
         default="unassigned", description="Owning category ID, or 'unassigned'"
     )
@@ -93,6 +96,127 @@ class GoalCreateRequest(BaseModel):
                 if self.sections is not None
                 else [{"_id": "d", "title": ""}]
             ),
+            "createdAt": int(time.time() * 1000),
+            "fieldUpdates": {},
+        }
+
+
+RECURRENCE_TYPES = (
+    "daily",
+    "repeat week",
+    "n per week",
+    "monthly",
+    "repeat month",
+    "repeat year",
+    "echo",
+    "custom",
+)
+
+
+class RecurringTaskCreateRequest(BaseModel):
+    """Input for create_recurring_task — a template, not an occurrence.
+
+    Marvin's client generates the occurrences from this document; never build
+    one by hand, their IDs are derived from the template and would collide.
+
+    Only 'project' templates are supported for now. They generate a project
+    Categories document whose children come from 'descendants'.
+    """
+
+    title: str = Field(..., min_length=1, description="Template title")
+    type: Literal[RECURRENCE_TYPES] = Field(  # type: ignore[valid-type]
+        ..., description="Recurrence pattern"
+    )
+    repeat_start: str = Field(
+        ...,
+        description="Anchor date YYYY-MM-DD. Occurrences are computed from this "
+        "anchor; it is not advanced as they are generated.",
+    )
+    recurring_type: Literal["project"] = Field(
+        default="project", description="Only 'project' templates are supported"
+    )
+    repeat: int = Field(default=1, ge=1, description="Interval, e.g. 2 = every second")
+    parent_id: str | None = Field(default=None, description="Owning category ID")
+    note: str | None = Field(default=None, description="Markdown note")
+    label_ids: list[str] = Field(default_factory=list)
+    time_estimate: int | None = Field(
+        default=None, description="Time estimate in milliseconds"
+    )
+    due_in: int | None = Field(
+        default=None, description="Days from each occurrence to its due date"
+    )
+    start_in: int | None = Field(default=None, description="Days offset for startDate")
+    end_in: int | None = Field(default=None, description="Days offset for endDate")
+    end_date: str | None = Field(
+        default=None, description="YYYY-MM-DD after which nothing is generated"
+    )
+    task_time: str | None = Field(default=None, description="HH:MM on occurrences")
+    reminder_offset: int | None = Field(default=None)
+    limit_to_weekdays: bool = Field(default=False, description="Skip weekends")
+    echo_days: int = Field(default=1, description="Only used by type='echo'")
+    on_count: int = Field(default=7, description="Only used by on/off patterns")
+    off_count: int = Field(default=7, description="Only used by on/off patterns")
+    custom_recurrence: str = Field(
+        default="", description="Expression for type='custom'"
+    )
+    is_starred: int = Field(default=0, description="Priority tier 0-3")
+    is_frogged: int = Field(default=0, description="Frog tier 0-3")
+    is_urgent: bool = Field(default=False)
+    is_reward: bool = Field(default=False)
+    reward_points: int = Field(default=0)
+    backburner: bool = Field(default=False)
+    descendants: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Template children, each a Tasks-shaped dict. Every generated "
+        "occurrence receives a copy.",
+    )
+
+    def _anchor(self) -> date:
+        return date.fromisoformat(self.repeat_start)
+
+    def to_document(self) -> dict[str, Any]:
+        """Build the document to send to /doc/create.
+
+        The calendar fields are derived from repeat_start rather than taken
+        from the caller, so they cannot contradict the anchor.
+        """
+        anchor = self._anchor()
+        weekday = anchor.isoweekday() % 7  # Marvin counts Sunday as 0
+
+        return {
+            "_id": new_document_id(),
+            "db": "RecurringTasks",
+            "recurringType": self.recurring_type,
+            "title": self.title,
+            "type": self.type,
+            "repeat": self.repeat,
+            "repeatStart": self.repeat_start,
+            "day": weekday,
+            "date": anchor.day,
+            "weekDays": [weekday],
+            "echoDays": self.echo_days,
+            "onCount": self.on_count,
+            "offCount": self.off_count,
+            "customRecurrence": self.custom_recurrence,
+            "limitToWeekdays": self.limit_to_weekdays,
+            "startIn": self.start_in,
+            "dueIn": self.due_in,
+            "endIn": self.end_in,
+            "endDate": self.end_date,
+            "taskTime": self.task_time,
+            "reminderOffset": self.reminder_offset,
+            "sectionId": None,
+            "parentId": self.parent_id or "unassigned",
+            "note": self.note or "",
+            "labelIds": list(self.label_ids),
+            "timeEstimate": self.time_estimate or 0,
+            "isStarred": self.is_starred,
+            "isFrogged": self.is_frogged,
+            "isUrgent": self.is_urgent,
+            "isReward": self.is_reward,
+            "rewardPoints": self.reward_points,
+            "backburner": self.backburner,
+            "descendants": list(self.descendants),
             "createdAt": int(time.time() * 1000),
             "fieldUpdates": {},
         }

@@ -10,6 +10,9 @@ import requests
 from pydantic import ValidationError
 
 from amazing_marvin_mcp.main import create_goal as create_goal_tool
+from amazing_marvin_mcp.main import (
+    create_recurring_task as create_recurring_task_tool,
+)
 from amazing_marvin_mcp.main import create_project as create_project_tool
 from amazing_marvin_mcp.main import create_project_with_tasks as create_project_with_tasks_tool
 from amazing_marvin_mcp.main import delete_document as delete_document_tool
@@ -19,7 +22,7 @@ from amazing_marvin_mcp.main import get_completed_tasks_for_date
 from amazing_marvin_mcp.main import get_goals
 from amazing_marvin_mcp.main import get_labels
 from amazing_marvin_mcp.main import get_tasks
-from amazing_marvin_mcp.models import GoalCreateRequest
+from amazing_marvin_mcp.models import GoalCreateRequest, RecurringTaskCreateRequest
 from amazing_marvin_mcp.analytics import (
     _get_daily_productivity_db,
     get_completed_tasks,
@@ -548,6 +551,18 @@ class TestFullAccessToken:
             f"{self.BASE_URL}/doc/create",
             headers={"X-Full-Access-Token": "tok"},
             json={"_id": "g1", "db": "Goals", "title": "Ship it"},
+        )
+
+    @patch("requests.post")
+    def test_create_recurring_task_sends_document_as_body(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"_id": "r1"})
+        self._client("tok").create_recurring_task(
+            {"_id": "r1", "db": "RecurringTasks", "title": "Inspection"}
+        )
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/doc/create",
+            headers={"X-Full-Access-Token": "tok"},
+            json={"_id": "r1", "db": "RecurringTasks", "title": "Inspection"},
         )
 
     @patch("requests.post")
@@ -2931,3 +2946,109 @@ class TestCreateGoalTool:
 
         assert result.success is False
         client.create_goal.assert_not_called()
+
+
+class TestRecurringTaskCreateRequest:
+    """The calendar fields must follow the anchor, not the caller."""
+
+    @staticmethod
+    def _template(**kwargs: Any) -> dict[str, Any]:
+        base = {"title": "Inspection", "type": "repeat year", "repeat_start": "2030-01-07"}
+        return RecurringTaskCreateRequest(**{**base, **kwargs}).to_document()
+
+    def test_document_matches_a_client_created_template(self):
+        doc = self._template(repeat=2, due_in=45)
+
+        assert doc["db"] == "RecurringTasks"
+        assert doc["recurringType"] == "project"
+        assert doc["type"] == "repeat year"
+        assert doc["repeat"] == 2
+        assert doc["repeatStart"] == "2030-01-07"
+        assert doc["dueIn"] == 45
+        assert doc["echoDays"] == 1
+        assert doc["onCount"] == 7
+        assert doc["offCount"] == 7
+        assert doc["customRecurrence"] == ""
+        assert doc["limitToWeekdays"] is False
+        assert doc["endDate"] is None
+        assert doc["sectionId"] is None
+        assert doc["fieldUpdates"] == {}
+        assert len(doc["_id"]) == 20
+
+    def test_calendar_fields_are_derived_from_the_anchor(self):
+        # 2030-01-07 is a Monday; Marvin counts Sunday as 0.
+        doc = self._template()
+        assert doc["day"] == 1
+        assert doc["date"] == 7
+        assert doc["weekDays"] == [1]
+
+    def test_sunday_anchor_is_day_zero(self):
+        doc = self._template(repeat_start="2030-01-06")
+        assert doc["day"] == 0
+        assert doc["weekDays"] == [0]
+
+    def test_descendants_are_passed_through(self):
+        child = {"title": "Gas test", "db": "Tasks", "done": False, "_id": "undefined"}
+        doc = self._template(descendants=[child])
+        assert doc["descendants"] == [child]
+
+    def test_unparented_template_lands_in_the_inbox(self):
+        assert self._template()["parentId"] == "unassigned"
+
+    def test_unknown_recurrence_type_is_rejected(self):
+        with pytest.raises(ValidationError):
+            self._template(type="every other tuesday")
+
+    def test_task_templates_are_not_supported_yet(self):
+        with pytest.raises(ValidationError):
+            self._template(recurring_type="task")
+
+    def test_malformed_anchor_is_rejected(self):
+        with pytest.raises(ValueError):
+            self._template(repeat_start="07.01.2030")
+
+
+class TestCreateRecurringTaskTool:
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_created_template_is_read_back(self, mock_create: MagicMock) -> None:
+        client = MagicMock()
+
+        def create(document: dict[str, Any]) -> dict[str, Any]:
+            client.get_document.return_value = {**document, "_rev": "1-abc"}
+            return {"ok": True}
+
+        client.create_recurring_task.side_effect = create
+        mock_create.return_value = client
+
+        result = asyncio.run(
+            create_recurring_task_tool(
+                title="Inspection",
+                recurrence_type="repeat year",
+                repeat_start="2030-01-07",
+                repeat=2,
+            )
+        )
+
+        sent = client.create_recurring_task.call_args.args[0]
+        assert sent["db"] == "RecurringTasks"
+        assert sent["type"] == "repeat year"
+        client.get_document.assert_called_once_with(sent["_id"])
+        assert result.success is True
+        assert "generate button" in result.summary.text
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_silent_no_op_is_reported_as_an_error(self, mock_create: MagicMock) -> None:
+        client = MagicMock()
+        client.create_recurring_task.return_value = {"ok": True}
+        client.get_document.return_value = {}
+        mock_create.return_value = client
+
+        result = asyncio.run(
+            create_recurring_task_tool(
+                title="Inspection",
+                recurrence_type="repeat year",
+                repeat_start="2030-01-07",
+            )
+        )
+
+        assert result.success is False

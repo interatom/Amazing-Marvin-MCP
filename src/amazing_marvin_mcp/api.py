@@ -196,6 +196,15 @@ class MarvinAPIClient:
         """
         return self.create_document(goal_data)
 
+    def create_recurring_task(self, template_data: dict) -> dict:
+        """Create a RecurringTasks template (requires full-access token).
+
+        template_data must be a complete document including '_id' and
+        'db': 'RecurringTasks'. Build it with
+        RecurringTaskCreateRequest.to_document().
+        """
+        return self.create_document(template_data)
+
     def delete_document(self, item_id: str) -> dict:
         """Permanently delete a document."""
         return self._make_request(
