@@ -23,7 +23,6 @@ from .models import (
     RecurringTaskCreateRequest,
     TaskUpdateRequest,
 )
-from .setters_builder import build_setters
 from .projects import (
     create_project_with_tasks as create_project_impl,
 )
@@ -31,13 +30,14 @@ from .projects import (
     get_project_overview as get_project_overview_impl,
 )
 from .response_models import StandardResponse
+from .setters_builder import build_setters
 from .tasks import (
     apply_fields,
-    batch_create_tasks as batch_create_tasks_impl,
-)
-from .tasks import (
     get_all_tasks_impl,
     get_child_tasks_recursive,
+)
+from .tasks import (
+    batch_create_tasks as batch_create_tasks_impl,
 )
 from .tool_converter import (
     create_error_response,
@@ -1680,7 +1680,7 @@ async def describe_smartlist_dsl(
     """
     start_time = time.time()
     try:
-        from .smartlist_dsl import (
+        from .smartlist_dsl import (  # noqa: PLC0415
             FUNCTIONS,
             OPERATORS,
             PER_FIELD_OPS,
@@ -1700,7 +1700,7 @@ async def describe_smartlist_dsl(
             return create_error_response(
                 ValueError(
                     f"Unknown category {category!r}. Valid: "
-                    f"{sorted(registries.keys()) + ['all']}"
+                    f"{[*sorted(registries.keys()), 'all']}"
                 ),
                 "describe_smartlist_dsl",
                 False,
@@ -1765,7 +1765,9 @@ async def describe_smartlist_dsl(
 
 def _full_access_configured() -> bool:
     try:
-        from .config import get_settings
+        # Imported here so a failing config import degrades to "not configured"
+        # instead of making this module unimportable.
+        from .config import get_settings  # noqa: PLC0415
         return bool(get_settings().amazing_marvin_full_access_token)
     except Exception:
         return False
@@ -1782,7 +1784,7 @@ if _full_access_configured():
 
 def _couchdb_configured() -> bool:
     try:
-        from .config import get_settings
+        from .config import get_settings  # noqa: PLC0415
         s = get_settings()
         return all([
             s.amazing_marvin_db_uri,

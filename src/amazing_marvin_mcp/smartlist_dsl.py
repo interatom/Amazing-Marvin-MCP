@@ -185,16 +185,16 @@ TOKENS: dict[str, str] = {
     "isoDate": "Absolute date in YYYY-MM-DD form. Compare with scheduleDate, dueDate, etc.",
     "futureDate": "Relative future date (e.g. 5d, 1w, 2m, 1y). Compare with scheduleDate, dueDate.",
     "pastDate": "Relative past date (e.g. -2m, -5d). Compare with scheduleDate, dueDate.",
-    "title": "Title search (case-insensitive); syntax title:word or title:\"multi word\".",
+    "title": 'Title search (case-insensitive); syntax title:word or title:"multi word".',
     "Title": "Title search (case-sensitive); syntax Title:Word.",
     "title0": "Title starts-with search (case-insensitive); syntax title0:word.",
     "Title0": "Title starts-with search (case-sensitive); syntax Title0:Word.",
     "note": "Note-text search (case-insensitive); syntax note:word.",
     "Note": "Note-text search (case-sensitive); syntax Note:Word.",
     "timeEstimateSum": "Duration estimate query, e.g. <~5m, ~0, <=~1h, >~30s. Σ prefix uses computed (summed) duration.",
-    "category": "Category/project reference; syntax #CategoryName or #\"Category Name\".",
-    "goal": "Goal reference; syntax ##GoalName or ##\"Goal Name\".",
-    "section": "Section reference; syntax !SectionName or !\"Section Name\".",
+    "category": 'Category/project reference; syntax #CategoryName or #"Category Name".',
+    "goal": 'Goal reference; syntax ##GoalName or ##"Goal Name".',
+    "section": 'Section reference; syntax !SectionName or !"Section Name".',
 }
 
 # Operator vocabulary for the {op, val} clauses on individual SmartLists fields

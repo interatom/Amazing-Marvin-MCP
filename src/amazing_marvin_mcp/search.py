@@ -9,9 +9,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .api import MarvinAPIClient
 from .db_filters import build_selector
 from .doc_types import VALID_DOC_TYPES
 from .response_models import (
@@ -21,7 +20,11 @@ from .response_models import (
     ResponseSummary,
     StandardResponse,
 )
-from .search_matcher import longest_token, matches as _query_matches
+from .search_matcher import longest_token
+from .search_matcher import matches as _query_matches
+
+if TYPE_CHECKING:
+    from .api import MarvinAPIClient
 
 logger = logging.getLogger(__name__)
 

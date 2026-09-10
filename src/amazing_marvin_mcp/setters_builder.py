@@ -45,7 +45,7 @@ def build_setters(update: TaskUpdateRequest) -> list[dict]:
     entries for tracked fields, and always appends updatedAt.
 
     Wire-format conventions enforced here:
-    - timeEstimate: input is minutes; stored as milliseconds (×60 000).
+    - timeEstimate: input is minutes; stored as milliseconds (minutes * 60_000).
     - isStarred / isFrogged: input is bool; stored as tier number (True → 1,
       False → null). Marvin uses 1/2/3 for tier levels and null for cleared.
       To set a specific tier, use update_document with an explicit setter.

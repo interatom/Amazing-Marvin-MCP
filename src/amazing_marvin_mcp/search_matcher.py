@@ -61,13 +61,9 @@ def matches(query: str, haystacks: list[str | None]) -> bool:
     cleaned = [_strip_diacritics(h) for h in haystacks if h]
     lowered = [h.lower() for h in cleaned]
 
-    for term in ci:
-        if not any(term in h for h in lowered):
-            return False
-    for phrase in cs:
-        if not any(phrase in h for h in cleaned):
-            return False
-    return True
+    return all(any(term in h for h in lowered) for term in ci) and all(
+        any(phrase in h for h in cleaned) for phrase in cs
+    )
 
 
 def longest_token(query: str) -> str | None:
