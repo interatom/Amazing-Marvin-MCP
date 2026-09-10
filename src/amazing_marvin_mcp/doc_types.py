@@ -29,6 +29,7 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "firstScheduled": "string (YYYY-MM-DD) | null (first time this task was scheduled — drives procrastination tracking)",
             "plannedWeek": "string (YYYY-MM-DD of ISO week start) | null",
             "plannedMonth": "string (YYYY-MM-DD of month start) | null",
+            "plannedQuarter": "string (YYYY-Q<n>, e.g. '2026-Q3') | null (set by the Plan Ahead strategy)",
             "isStarred": "boolean | number (1/2/3 for priority tiers; null/false when cleared)",
             "isFrogged": "boolean | number (1/2/3 for frog tiers; null/false when cleared)",
             "isPinned": "boolean (true when this task is the pinned-task parent in the Master List)",
@@ -126,6 +127,7 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "firstScheduled": "string (YYYY-MM-DD) | null",
             "plannedWeek": "string (YYYY-MM-DD of ISO week start) | null",
             "plannedMonth": "string (YYYY-MM-DD of month start) | null",
+            "plannedQuarter": "string (YYYY-Q<n>, e.g. '2026-Q3') | null (set by the Plan Ahead strategy)",
             "reviewDate": "string (YYYY-MM-DD) | null",
             "isStarred": "boolean | number (1/2/3 priority tiers; null/false when cleared; projects can be starred)",
             "isFrogged": "boolean | number (1/2/3 frog tiers; null/false when cleared; projects can be frogged)",
@@ -151,7 +153,8 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "Use project_type='project' to return projects only",
             "doneDate is a string (YYYY-MM-DD), unlike Tasks which use epoch ms doneAt",
             "Projects (type='project') carry day, dueDate, startDate, endDate, "
-            "firstScheduled, plannedWeek, plannedMonth, isStarred, isFrogged with "
+            "firstScheduled, plannedWeek, plannedMonth, plannedQuarter, isStarred, "
+            "isFrogged with "
             "the same semantics as Tasks. Plain categories rarely populate these "
             "scheduling/priority fields, so filtering Categories by them mostly "
             "selects projects in practice.",

@@ -11,12 +11,33 @@ Aliases: predicates carrying a ``*`` prefix in user-facing syntax (e.g.
 ``*backburner``, ``*new``, ``*stale``, ``*review``, ``*reward``,
 ``*hasSubtasks``, ``*hasOpenSubtasks``, ``*minutesTracked``, ``*rewardPoints``,
 ``*viaEmail``, ``*inGoal``) are accepted with or without the prefix.
+
+The ``&`` prefix is not an alias but part of the name: those predicates test
+Plan Ahead membership (week, month or quarter). Where their help text mentions
+values "derived from" a shorter period, that derivation is on unless
+``strategySettings.planAhead.upwardPlanningSync`` is set to false.
 """
 
 # Predicates from the advanced filter DSL. Mix of boolean tests (return
 # True/False), comparable fields (return numeric/date values), and date
 # keywords (return absolute or relative dates). Sorted alphabetically.
 PREDICATES: dict[str, str] = {
+    "&inFuture": "True if this task/project is planned in the future.",
+    "&inPast": "True if this task/project is planned in the past.",
+    "&lastMonth": "True if this task/project is planned last month (including derived from week if sync enabled).",
+    "&lastQuarter": "True if this task/project is planned for last quarter (including derived from month/week if sync enabled).",
+    "&lastWeek": "True if this task/project is planned last week. Warning: Monday is the considered the start of the week here!",
+    "&monthPlanned": "True if this task/project is month planned (including derived from week if sync enabled).",
+    "&nextMonth": "True if this task/project is planned next month (including derived from week if sync enabled).",
+    "&nextQuarter": "True if this task/project is planned for next quarter (including derived from month/week if sync enabled).",
+    "&nextWeek": "True if this task/project is planned for next week. Warning: Monday is the considered the start of the week here!",
+    "&planned": "True if this task/project is planned (for any time period: week, month, or quarter).",
+    "&quarterPlanned": "True if this task/project is quarter planned (including derived from month/week if sync enabled).",
+    "&thisMonth": "True if this task/project is planned this month (including derived from week if sync enabled).",
+    "&thisQuarter": "True if this task/project is planned for this quarter (including derived from month/week if sync enabled).",
+    "&thisWeek": "True if this task/project is planned for this week. Warning: Monday is the considered the start of the week here!",
+    "&unplanned": "True if this task/project is neither week planned nor month planned nor quarter planned.",
+    "&weekPlanned": "True if this task/project is week planned.",
     "backburner": "True if this task/project is on the backburner.",
     "createdRecently": "True if this task/project was created in the last 7 days.",
     "createdThisWeek": "True if this task/project was created this week.",
@@ -104,6 +125,7 @@ PREDICATES: dict[str, str] = {
     "orbit": "True if this task/project is in orbit.",
     "pickedProject": "True if this is a project that has been picked today using the Project Focus Picker, or false if it's not a project or hasn't been picked.",
     "plannedMonth": "The task/project's planned month. This is null if not planned.",
+    "plannedQuarter": "The task/project's planned quarter, formatted YYYY-Q<n> (e.g. 2026-Q3). This is null if not planned.",
     "plannedWeek": "The task/project's planned week. This is actually the date of the first day of that week, or null if not planned.",
     "pledgeDate": "The task/project's accountability pledge date.",
     "pledgeDue1Day": "True if this task/project has a pledge due tomorrow.",
