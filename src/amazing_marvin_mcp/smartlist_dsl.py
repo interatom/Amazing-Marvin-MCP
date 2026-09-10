@@ -176,7 +176,9 @@ OPERATORS: dict[str, str] = {
 
 # Token types recognized by the DSL parser. Plus implicit prefix tokens:
 # @label / @"label name" — label reference;
-# type:task|project|category — type filter.
+# `type:task|project|category` — type filter.
+# (Backticks are load-bearing: a comment starting with `# type:` is read as a
+# PEP 484 type comment and fails to parse.)
 TOKENS: dict[str, str] = {
     "number": "Integer literal (regex: ^[0-9]+$). Use for comparing rewardPoints, numScheduledTasks, etc.",
     "float": "Decimal literal (regex: ^[0-9]+\\.[0-9]*$). Use for fractional rewardPoints comparisons.",
