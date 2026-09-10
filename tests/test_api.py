@@ -2984,10 +2984,53 @@ class TestRecurringTaskCreateRequest:
         assert doc["day"] == 0
         assert doc["weekDays"] == [0]
 
-    def test_descendants_are_passed_through(self):
-        child = {"title": "Gas test", "db": "Tasks", "done": False, "_id": "undefined"}
-        doc = self._template(descendants=[child])
-        assert doc["descendants"] == [child]
+    def test_descendants_keep_their_content(self):
+        child = {"title": "Gas test", "db": "Tasks", "done": False, "masterRank": 1}
+        [stored] = self._template(descendants=[child])["descendants"]
+        assert {k: v for k, v in stored.items() if k != "_id"} == child
+
+    def test_children_never_share_an_id(self):
+        """Children are stored under an ID derived from their own _id, so a
+        shared one makes them overwrite each other when occurrences are
+        generated."""
+        children = [
+            {"title": "Book the appointment", "_id": "undefined", "masterRank": 1},
+            {"title": "Roll the template forward", "_id": "undefined", "masterRank": 2},
+        ]
+        stored = self._template(descendants=children)["descendants"]
+
+        ids = [c["_id"] for c in stored]
+        assert len(set(ids)) == 2
+        assert "undefined" not in ids
+        assert [c["title"] for c in stored] == [
+            "Book the appointment",
+            "Roll the template forward",
+        ]
+
+    def test_a_caller_supplied_id_is_kept(self):
+        stored = self._template(
+            descendants=[{"title": "Gas test", "_id": "gas-check"}]
+        )["descendants"]
+        assert stored[0]["_id"] == "gas-check"
+
+    def test_a_repeated_caller_id_is_replaced(self):
+        stored = self._template(
+            descendants=[
+                {"title": "First", "_id": "dup"},
+                {"title": "Second", "_id": "dup"},
+            ]
+        )["descendants"]
+        assert stored[0]["_id"] == "dup"
+        assert stored[1]["_id"] != "dup"
+
+    def test_a_child_without_an_id_gets_one(self):
+        stored = self._template(descendants=[{"title": "Gas test"}])["descendants"]
+        assert len(stored[0]["_id"]) == 20
+
+    def test_the_input_list_is_not_mutated(self):
+        children = [{"title": "Gas test", "_id": "undefined"}]
+        self._template(descendants=children)
+        assert children[0]["_id"] == "undefined"
 
     def test_unparented_template_lands_in_the_inbox(self):
         assert self._template()["parentId"] == "unassigned"

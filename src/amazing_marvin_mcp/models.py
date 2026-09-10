@@ -168,11 +168,38 @@ class RecurringTaskCreateRequest(BaseModel):
     descendants: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Template children, each a Tasks-shaped dict. Every generated "
-        "occurrence receives a copy.",
+        "occurrence receives a copy. Each child gets a distinct _id; children "
+        "sharing one would overwrite each other when occurrences are generated.",
     )
 
     def _anchor(self) -> date:
         return date.fromisoformat(self.repeat_start)
+
+    def _descendants_with_ids(self) -> list[dict[str, Any]]:
+        """Give every template child a distinct _id.
+
+        Each generated child is stored under an ID built from the occurrence
+        date and the child's own _id, so two children sharing an _id write to
+        the same document and only the last one survives. Marvin's own editor
+        leaves the field as the string "undefined", which is truthy and
+        therefore collides rather than being replaced.
+        """
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for child in self.descendants:
+            entry = dict(child)
+            child_id = entry.get("_id")
+            if (
+                not isinstance(child_id, str)
+                or not child_id
+                or child_id == "undefined"
+                or child_id in seen
+            ):
+                child_id = new_document_id()
+            seen.add(child_id)
+            entry["_id"] = child_id
+            out.append(entry)
+        return out
 
     def to_document(self) -> dict[str, Any]:
         """Build the document to send to /doc/create.
@@ -216,7 +243,7 @@ class RecurringTaskCreateRequest(BaseModel):
             "isReward": self.is_reward,
             "rewardPoints": self.reward_points,
             "backburner": self.backburner,
-            "descendants": list(self.descendants),
+            "descendants": self._descendants_with_ids(),
             "createdAt": int(time.time() * 1000),
             "fieldUpdates": {},
         }
