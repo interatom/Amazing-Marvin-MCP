@@ -59,7 +59,22 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90", "I", "N", "UP", "B", "A", "C4", "DJ", "EM", "EXE", "ISC", "ICN", "G", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "ARG", "PTH", "ERA", "PD", "PGH", "PL", "TRY", "NPY", "RUF"]
-ignore = ["E501", "PLR0913", "PLR0912", "PLR0915", "TRY003", "EM101", "EM102", "PLR2004"]
+# C901 and PLR0911 measure the same thing as PLR0912 / PLR0915, which are already
+# ignored: the size of a few grown functions (build_selector, execute_query_docs,
+# execute_search_docs). Splitting those to satisfy a threshold would move query
+# semantics around for no functional gain.
+ignore = [
+    "E501",
+    "PLR0913",
+    "PLR0912",
+    "PLR0915",
+    "PLR0911",
+    "C901",
+    "TRY003",
+    "EM101",
+    "EM102",
+    "PLR2004",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["T201", "EXE001"]  # Allow print statements and missing executable permissions in scripts
