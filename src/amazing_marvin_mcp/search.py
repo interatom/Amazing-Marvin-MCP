@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import Any
 
 from .api import MarvinAPIClient
 from .db_filters import build_selector
@@ -58,6 +59,7 @@ def _augment_with_text_filter(
     """Add a regex-on-title (and optionally note) clause to an existing selector."""
     escaped = re.escape(token)
     pattern = f"(?i){escaped}"
+    text_filter: dict[str, Any]
     if search_notes:
         text_filter = {
             "$or": [

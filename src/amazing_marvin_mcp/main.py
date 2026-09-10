@@ -1749,10 +1749,10 @@ async def describe_smartlist_dsl(
                 start_time=start_time,
             )
 
-        data = registries if category == "all" else registries[category]
+        selected = registries if category == "all" else registries[category]
         return create_simple_response(
-            data=data,
-            summary_text=f"DSL {category}: {sum(len(v) for v in data.values()) if category == 'all' else len(data)} entries",
+            data=selected,
+            summary_text=f"DSL {category}: {sum(len(v) for v in selected.values()) if category == 'all' else len(selected)} entries",
             api_endpoint="describe_smartlist_dsl",
             api_calls_made=0,
             debug=False,

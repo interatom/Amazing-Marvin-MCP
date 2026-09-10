@@ -69,7 +69,9 @@ class MarvinAPIClient:
         Raises ValueError if DB credentials are not configured.
         Returns the full {"docs": [...], "bookmark": "..."} envelope.
         """
-        if not self.has_couchdb:
+        # Spelled out rather than `if not self.has_couchdb` so the type checker
+        # can see that the credentials are set from here on.
+        if not (self._db_uri and self._db_name and self._db_user and self._db_password):
             raise ValueError(
                 "CouchDB credentials not configured. "
                 "Set AMAZING_MARVIN_DB_URI, AMAZING_MARVIN_DB_NAME, "
