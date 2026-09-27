@@ -2231,7 +2231,14 @@ def start():
     if transport.lower() == "http":
         host = os.getenv("MCP_HOST", "0.0.0.0")
         port = int(os.getenv("MCP_PORT", "8000"))
-        mcp.run(transport="http", host=host, port=port)
+        # fastmcp leaves Host/Origin validation off by default, which leaves a
+        # loopback-bound server open to DNS rebinding. "auto" validates
+        # whenever the server is bound to localhost; the fastmcp env var
+        # FASTMCP_HTTP_HOST_ORIGIN_PROTECTION still overrides it.
+        kwargs = {}
+        if "FASTMCP_HTTP_HOST_ORIGIN_PROTECTION" not in os.environ:
+            kwargs["host_origin_protection"] = "auto"
+        mcp.run(transport="http", host=host, port=port, **kwargs)
     else:
         mcp.run()  # Default STDIO transport
 
