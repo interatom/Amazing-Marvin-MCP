@@ -10,6 +10,7 @@ DocType = Literal[
     "Tasks", "Categories", "Labels", "LabelGroups", "Habits", "Goals",
     "Trackers", "Rewards", "Events", "PlannerItems", "Calendars",
     "RecurringTasks", "SavedItems", "ProfileItems", "SmartLists",
+    "Notebooks", "Pages",
 ]
 
 DOC_TYPE_SCHEMAS: dict[str, dict] = {
@@ -155,6 +156,13 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
         "not_applicable": [],
         "gotchas": [
             "REST /categories strips the 'note' field; use query_docs to retrieve it",
+            "With the Notebooks strategy, a project/category note can live in "
+            "Pages instead: once the item has a Notebooks doc (parentId = its "
+            "_id) with pages, the note shown is the lowest-rank page's note, and "
+            "the client clears the category's own 'note' when it moves it there. "
+            "An empty 'note' does not mean no notes, and writing 'note' on such "
+            "an item is invisible — update the page instead. See "
+            'describe_doc_type("Pages").',
             "Projects are stored in the same Categories collection as plain categories",
             "Use project_type='project' to return projects only",
             "doneDate is a string (YYYY-MM-DD), unlike Tasks which use epoch ms doneAt",
@@ -591,7 +599,7 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "describe_smartlist_dsl(category='predicates'|'functions'|'operators'|"
             "'tokens') to dump a registry, or describe_smartlist_dsl(name='...') "
             "to look up a single identifier (e.g. name='isNextStep', name='&&', "
-            "name='parent'). Coverage: 130 predicates (boolean tests, date "
+            "name='parent'). Coverage: 206 predicates (boolean tests, date "
             "keywords, comparable fields), 6 functions (parent, anyAncestor, "
             "anyChild, allChildren, anySibling, allSiblings), 11 operators "
             "(! && || == != > < >= <= + -), 15 token types. Help center subset: "
@@ -608,6 +616,79 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
         "examples": [
             'query_docs(doc_type="SmartLists")  # list all smart lists',
             'get_document("WF_GTD_nextActions")  # fetch a workflow-preset smart list by ID',
+        ],
+    },
+    "Notebooks": {
+        "fields": {
+            "_id": "string ('nb_' prefix)",
+            "db": "string (always 'Notebooks')",
+            "title": "string ('' for a project/category notebook, which shows the item's title)",
+            "icon": "string | null",
+            "color": "string | null",
+            "rank": "number (sort order on the Notebooks screen)",
+            "parentId": "string | null (Categories _id of the owning project/category; null = standalone notebook)",
+            "parentType": "string | null ('project' | 'category'; null when standalone)",
+            "sections": "array of {id ('sec_' prefix), title, rank} (page groups inside the notebook)",
+            "detachedFrom": "string | null (Categories _id the notebook was kept from after that project was completed or deleted)",
+            "detachedAt": "number | null (epoch ms of the detach)",
+        },
+        "applicable_filters": ["contains"],
+        "not_applicable": [
+            "include_done", "include_deleted", "has_note", "has_due_date",
+            "has_time_estimate", "has_scheduled_day", "due", "scheduled",
+            "done_after", "done_before", "parent_id", "project_type",
+            "is_starred", "is_frogged", "priority",
+        ],
+        "gotchas": [
+            "Created by the Notebooks strategy (strategies.notebook). Each "
+            "project/category has at most one notebook; find it by parentId.",
+            "Deleting a notebook removes the doc and its pages outright (copies "
+            "go to the client's Trash); there is no deletedAt soft-delete.",
+            "The pages themselves are separate 'Pages' docs linked by notebookId.",
+        ],
+        "examples": [
+            'query_docs(doc_type="Notebooks")  # all notebooks',
+            'query_docs(doc_type="Notebooks", fields=["_id","title","parentId","parentType"])',
+        ],
+    },
+    "Pages": {
+        "fields": {
+            "_id": "string ('pg_' prefix)",
+            "db": "string (always 'Pages')",
+            "notebookId": "string (Notebooks _id)",
+            "sectionId": "string | null (id of one of the notebook's sections)",
+            "rank": "number (order within the notebook/section; the lowest-rank page is page 1)",
+            "title": "string",
+            "icon": "string | null",
+            "color": "string | null",
+            "note": "string (markdown page body, up to 750KB)",
+            "hasBody": "boolean (true when the body is non-empty)",
+            "migratedAt": "number (epoch ms; set when the page was created from an existing note)",
+            "originalNoteFrom": "string (Categories _id whose note was moved into this page)",
+            "createdAt": "number (epoch ms)",
+            "updatedAt": "number (epoch ms)",
+        },
+        "applicable_filters": ["contains"],
+        "not_applicable": [
+            "include_done", "include_deleted", "has_note", "has_due_date",
+            "has_time_estimate", "has_scheduled_day", "due", "scheduled",
+            "done_after", "done_before", "parent_id", "project_type",
+            "is_starred", "is_frogged", "priority",
+        ],
+        "gotchas": [
+            "Page 1 of a project/category notebook is usually the item's former "
+            "note: the client moves it into a page titled 'Notes' (rank 1, "
+            "originalNoteFrom set) and clears the category's 'note'.",
+            "To read a project's visible note, find its notebook "
+            "(Notebooks.parentId) and take the lowest-rank page; fall back to "
+            "the category's 'note' only when the notebook has no pages.",
+            "To change a page, update_document on the page _id with a 'note' "
+            "setter. Deleting a page removes the doc (no deletedAt).",
+            "The contains filter matches page title and body.",
+        ],
+        "examples": [
+            'query_docs(doc_type="Pages", fields=["_id","title","notebookId","rank"])  # page index without bodies',
+            'query_docs(doc_type="Pages", contains="meeting")  # search page titles and bodies',
         ],
     },
 }
