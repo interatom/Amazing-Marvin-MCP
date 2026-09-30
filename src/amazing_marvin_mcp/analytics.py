@@ -7,7 +7,7 @@ from typing import Any, cast
 from .api import MarvinAPIClient
 from .cache import done_items_cache
 from .date_utils import DateUtils
-from .db_filters import not_equal_or_missing
+from .db_filters import date_string_range, not_equal_or_missing
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def _get_daily_productivity_db(
         "deletedAt": {"$exists": False},
         "$or": [
             {"day": today},
-            {"dueDate": {"$lte": today}, **not_equal_or_missing("done", True)},
+            {"dueDate": date_string_range(None, today), **not_equal_or_missing("done", True)},
             {"done": True, "doneAt": {"$gte": today_start_ms, "$lte": today_end_ms}},
         ],
     }

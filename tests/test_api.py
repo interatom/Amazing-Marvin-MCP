@@ -1723,14 +1723,14 @@ class TestBuildSelector:
         sel = build_selector("Tasks", due_after="2026-04-01")
         v = self._get_frag(sel, "dueDate")
         assert v["$gte"] == "2026-04-01"
-        assert "$lte" not in v
+        assert v["$lte"] == "9999-12-31"
 
     def test_due_range_before_only(self):
         from amazing_marvin_mcp.db_filters import build_selector
         sel = build_selector("Tasks", due_before="2026-04-30")
         v = self._get_frag(sel, "dueDate")
         assert v["$lte"] == "2026-04-30"
-        assert "$gte" not in v
+        assert v["$gte"] == "0000-01-01"
 
     def test_due_range_both(self):
         from amazing_marvin_mcp.db_filters import build_selector
@@ -1771,6 +1771,59 @@ class TestBuildSelector:
         sel = build_selector("Categories", done_after="2026-04-14", include_done=True)
         v = self._get_frag(sel, "doneDate")
         assert v["$gte"] == "2026-04-14"
+
+    # --- one-sided ranges must not match Marvin's "no date" placeholders ---
+
+    @staticmethod
+    def _couch_matches(value, cond: dict) -> bool:
+        """Evaluate a Mango range the way CouchDB collates mixed types:
+        null < booleans < numbers < strings."""
+        def key(v):
+            if v is None:
+                return (0, 0)
+            if isinstance(v, bool):
+                return (1, v)
+            if isinstance(v, (int, float)):
+                return (2, v)
+            return (3, v)
+        ops = {
+            "$gt": lambda a, b: a > b,
+            "$gte": lambda a, b: a >= b,
+            "$lt": lambda a, b: a < b,
+            "$lte": lambda a, b: a <= b,
+        }
+        return all(ops[op](key(value), key(bound)) for op, bound in cond.items())
+
+    @pytest.mark.parametrize(
+        ("field", "kwargs"),
+        [
+            ("dueDate", {"due_before": "2026-10-01"}),
+            ("dueDate", {"due_after": "2026-09-01"}),
+            ("day", {"scheduled_before": "2026-10-01"}),
+            ("day", {"scheduled_after": "2026-09-01"}),
+        ],
+    )
+    def test_one_sided_date_range_excludes_placeholders(self, field, kwargs):
+        from amazing_marvin_mcp.db_filters import build_selector
+        cond = self._get_frag(build_selector("Tasks", **kwargs), field)
+        for placeholder in (None, "", "unassigned"):
+            assert not self._couch_matches(placeholder, cond), placeholder
+        assert self._couch_matches("2026-09-15", cond)
+
+    def test_done_before_for_tasks_excludes_never_completed(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Tasks", done_before="2026-09-30", include_done=True)
+        cond = self._get_frag(sel, "doneAt")
+        for placeholder in (None, 0):
+            assert not self._couch_matches(placeholder, cond), placeholder
+        assert self._couch_matches(1788263368891, cond)
+
+    def test_done_before_for_categories_excludes_missing_doneDate(self):
+        from amazing_marvin_mcp.db_filters import build_selector
+        sel = build_selector("Categories", done_before="2026-09-30", include_done=True)
+        cond = self._get_frag(sel, "doneDate")
+        for placeholder in (None, ""):
+            assert not self._couch_matches(placeholder, cond), placeholder
 
     # --- structural filters ---
 

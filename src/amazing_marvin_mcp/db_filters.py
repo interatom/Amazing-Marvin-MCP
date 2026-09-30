@@ -17,6 +17,19 @@ def _date_to_epoch_ms_end(date_str: str) -> int:
     return int((dt + timedelta(days=1)).timestamp() * 1000) - 1
 
 
+# CouchDB collates null < booleans < numbers < strings, and "" sorts before any
+# date while "unassigned" sorts after one. An open-ended string range therefore
+# also matches the "no date" placeholders Marvin stores (null, "", "unassigned").
+# Closing both ends to the span of YYYY-MM-DD strings leaves only real dates.
+_MIN_DATE = "0000-01-01"
+_MAX_DATE = "9999-12-31"
+
+
+def date_string_range(after: str | None, before: str | None) -> dict:
+    """Mango range over a YYYY-MM-DD string field, bounded on both ends."""
+    return {"$gte": after or _MIN_DATE, "$lte": before or _MAX_DATE}
+
+
 def _truthy_flag(field: str) -> dict:
     return {field: {"$in": [True, 1, 2, 3]}}
 
@@ -147,12 +160,7 @@ def build_selector(doc_type: str, **filters) -> dict:
     if due:
         frags.append({"dueDate": due})
     elif due_before or due_after:
-        cond: dict = {}
-        if due_after:
-            cond["$gte"] = due_after
-        if due_before:
-            cond["$lte"] = due_before
-        frags.append({"dueDate": cond})
+        frags.append({"dueDate": date_string_range(due_after, due_before)})
 
     # scheduled / day field — exact or range
     scheduled = filters.get("scheduled")
@@ -161,33 +169,24 @@ def build_selector(doc_type: str, **filters) -> dict:
     if scheduled:
         frags.append({"day": scheduled})
     elif scheduled_before or scheduled_after:
-        cond = {}
-        if scheduled_after:
-            cond["$gte"] = scheduled_after
-        if scheduled_before:
-            cond["$lte"] = scheduled_before
-        frags.append({"day": cond})
+        frags.append({"day": date_string_range(scheduled_after, scheduled_before)})
 
     # done_after / done_before
     done_after = filters.get("done_after")
     done_before = filters.get("done_before")
     if done_after or done_before:
         if doc_type == "Tasks":
-            # doneAt is epoch milliseconds
-            cond = {}
+            # doneAt is epoch milliseconds; tasks never completed carry 0 or null,
+            # so the lower bound stays above 0 even without done_after.
+            cond: dict = {"$gt": 0}
             if done_after:
-                cond["$gte"] = _date_to_epoch_ms_start(done_after)
+                cond = {"$gte": _date_to_epoch_ms_start(done_after)}
             if done_before:
                 cond["$lte"] = _date_to_epoch_ms_end(done_before)
             frags.append({"doneAt": cond})
         else:
             # doneDate is a YYYY-MM-DD string
-            cond = {}
-            if done_after:
-                cond["$gte"] = done_after
-            if done_before:
-                cond["$lte"] = done_before
-            frags.append({"doneDate": cond})
+            frags.append({"doneDate": date_string_range(done_after, done_before)})
 
     # parent_id
     parent_id = filters.get("parent_id")
