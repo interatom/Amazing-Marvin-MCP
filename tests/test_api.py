@@ -13,6 +13,7 @@ from amazing_marvin_mcp.main import create_goal as create_goal_tool
 from amazing_marvin_mcp.main import (
     create_recurring_task as create_recurring_task_tool,
 )
+from amazing_marvin_mcp.main import create_smart_list as create_smart_list_tool
 from amazing_marvin_mcp.main import create_project as create_project_tool
 from amazing_marvin_mcp.main import create_project_with_tasks as create_project_with_tasks_tool
 from amazing_marvin_mcp.main import delete_document as delete_document_tool
@@ -22,7 +23,12 @@ from amazing_marvin_mcp.main import get_completed_tasks_for_date
 from amazing_marvin_mcp.main import get_goals
 from amazing_marvin_mcp.main import get_labels
 from amazing_marvin_mcp.main import get_tasks
-from amazing_marvin_mcp.models import GoalCreateRequest, RecurringTaskCreateRequest
+from amazing_marvin_mcp.models import (
+    SMART_LIST_FILTER_FIELDS,
+    GoalCreateRequest,
+    RecurringTaskCreateRequest,
+    SmartListCreateRequest,
+)
 from amazing_marvin_mcp.analytics import (
     _get_daily_productivity_db,
     get_completed_tasks,
@@ -3143,5 +3149,70 @@ class TestCreateRecurringTaskTool:
                 repeat_start="2030-01-07",
             )
         )
+
+        assert result.success is False
+
+
+class TestSmartListCreateRequest:
+    """The document must carry the full field set the client writes."""
+
+    def test_unused_conditions_are_null(self) -> None:
+        doc = SmartListCreateRequest(name="Work · Tools").to_document()
+        assert doc["db"] == "SmartLists"
+        assert doc["name"] == "Work · Tools"
+        assert doc["fieldUpdates"] == {}
+        assert len(doc["_id"]) == 13
+        for field in SMART_LIST_FILTER_FIELDS:
+            assert field in doc
+            assert doc[field] is None
+
+    def test_category_is_a_single_id_ancestor_clause(self) -> None:
+        doc = SmartListCreateRequest(name="x", category_id="cat1").to_document()
+        assert doc["parentId"] == {"op": "in", "val": "cat1"}
+
+    def test_recurring_and_label_clauses(self) -> None:
+        doc = SmartListCreateRequest(
+            name="x", recurring="y", label_id="lab1"
+        ).to_document()
+        assert doc["recurring"] == {"op": "y"}
+        assert doc["labelIds"] == {"op": "in", "val": "lab1"}
+
+    def test_unknown_recurring_op_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            SmartListCreateRequest(name="x", recurring="weekly")
+
+
+class TestCreateSmartListTool:
+    """The tool must confirm the Smart List exists before reporting success."""
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_created_smart_list_is_read_back(self, mock_create: MagicMock) -> None:
+        client = MagicMock()
+        mock_create.return_value = client
+
+        def create(document: dict[str, Any]) -> dict[str, Any]:
+            client.get_document.return_value = {**document, "_rev": "1-abc"}
+            return {"ok": True}
+
+        client.create_smart_list.side_effect = create
+
+        result = asyncio.run(
+            create_smart_list_tool(name="Work · Tools", category_id="cat1")
+        )
+
+        sent = client.create_smart_list.call_args.args[0]
+        assert sent["parentId"] == {"op": "in", "val": "cat1"}
+        client.get_document.assert_called_once_with(sent["_id"])
+        assert result.success is True
+        assert result.data["created_smart_list"]["_id"] == sent["_id"]
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_silent_no_op_is_reported_as_an_error(self, mock_create: MagicMock) -> None:
+        client = MagicMock()
+        client.create_smart_list.return_value = {"ok": True}
+        client.get_document.return_value = {}
+        mock_create.return_value = client
+
+        result = asyncio.run(create_smart_list_tool(name="Work · Tools"))
 
         assert result.success is False

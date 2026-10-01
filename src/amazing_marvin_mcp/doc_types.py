@@ -612,6 +612,9 @@ DOC_TYPE_SCHEMAS: dict[str, dict] = {
             "Planner-view pinned IDs are stored separately at "
             "profile.strategySettings.plannerSmartLists in a ProfileItems doc, "
             "not on the smart-list itself.",
+            "parentId {'op': 'in', 'val': <category _id>} takes a single ID and "
+            "is an ancestor test: it matches items anywhere below that category. "
+            "Create Smart Lists with create_smart_list rather than by hand.",
         ],
         "examples": [
             'query_docs(doc_type="SmartLists")  # list all smart lists',

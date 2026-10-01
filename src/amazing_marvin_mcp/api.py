@@ -207,6 +207,14 @@ class MarvinAPIClient:
         """
         return self.create_document(template_data)
 
+    def create_smart_list(self, smart_list_data: dict) -> dict:
+        """Create a SmartLists document (requires full-access token).
+
+        smart_list_data must be a complete document including '_id' and
+        'db': 'SmartLists'. Build it with SmartListCreateRequest.to_document().
+        """
+        return self.create_document(smart_list_data)
+
     def delete_document(self, item_id: str) -> dict:
         """Permanently delete a document."""
         return self._make_request(

@@ -21,6 +21,7 @@ from .db_filters import not_equal_or_missing
 from .models import (
     GoalCreateRequest,
     RecurringTaskCreateRequest,
+    SmartListCreateRequest,
     TaskUpdateRequest,
 )
 from .projects import (
@@ -541,6 +542,74 @@ async def create_recurring_task(
         )
     except Exception as e:
         logger.exception("Failed to create recurring task '%s'", title)
+        return create_error_response(e, "/doc/create", debug, start_time)
+
+
+async def create_smart_list(
+    name: str,
+    category_id: str | None = None,
+    recurring: str | None = None,
+    label_id: str | None = None,
+    group_by: str | None = None,
+    debug: bool = False,
+) -> StandardResponse:
+    """Create a Smart List with basic filter conditions (requires AMAZING_MARVIN_FULL_ACCESS_TOKEN).
+
+    Args:
+        name: Display name of the Smart List.
+        category_id: Categories _id. Matches every item below that category,
+            sub-categories and projects included (an ancestor test).
+        recurring: 'n' non-recurring, 'rt' recurring tasks, 'rp' recurring
+            projects, 'y' any recurring.
+        label_id: Labels _id the items must carry.
+        group_by: Grouping of the list itself, e.g. 'projectId'.
+
+    Conditions combine with AND. For anything beyond these, edit the stored
+    {op, val} clauses with update_document — describe_smartlist_dsl lists the
+    ops per field.
+
+    A Smart List can drive a Day View custom section: reference its _id as
+    'smartList' in an entry of the strategySettings.customStructure
+    ProfileItem. Such a section only sorts items already on the day; the
+    first section whose Smart List matches an item wins.
+    """
+    start_time = time.time()
+    try:
+        api_client = create_api_client()
+        request = SmartListCreateRequest(
+            name=name,
+            category_id=category_id,
+            recurring=recurring,  # type: ignore[arg-type]
+            label_id=label_id,
+            group_by=group_by,
+        )
+        document = request.to_document()
+        smart_list_id = document["_id"]
+        api_client.create_smart_list(document)
+
+        stored = api_client.get_document(smart_list_id)
+        if not isinstance(stored, dict) or stored.get("_id") != smart_list_id:
+            logger.error("Smart List %s was accepted but not stored", smart_list_id)
+            return create_error_response(
+                RuntimeError(
+                    f"Smart List {smart_list_id} was not stored — the create "
+                    "request was accepted but the document cannot be read back."
+                ),
+                "/doc/create",
+                debug,
+                start_time,
+            )
+
+        return create_simple_response(
+            data={"created_smart_list": stored},
+            summary_text=f"Created Smart List: {name}",
+            api_endpoint="/doc/create",
+            api_calls_made=2,
+            debug=debug,
+            start_time=start_time,
+        )
+    except Exception as e:
+        logger.exception("Failed to create Smart List '%s'", name)
         return create_error_response(e, "/doc/create", debug, start_time)
 
 
@@ -1780,6 +1849,7 @@ if _full_access_configured():
     update_task = mcp.tool()(update_task)
     create_goal = mcp.tool()(create_goal)
     create_recurring_task = mcp.tool()(create_recurring_task)
+    create_smart_list = mcp.tool()(create_smart_list)
 
 
 def _couchdb_configured() -> bool:

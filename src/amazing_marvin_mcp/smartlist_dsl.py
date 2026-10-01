@@ -351,8 +351,9 @@ PER_FIELD_OPS: dict[str, dict[str, str]] = {
     },
     "parentId": {
         "any": "unspecified",
-        "in": "in...",
-        "nin": "not in...",
+        "in": "in... (val: ONE category _id as a string; ancestor test, so "
+        "sub-categories and projects below it match too)",
+        "nin": "not in... (val: one category _id)",
     },
     "planAhead": {
         "any": "unspecified",

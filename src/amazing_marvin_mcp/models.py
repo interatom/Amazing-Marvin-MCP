@@ -247,3 +247,70 @@ class RecurringTaskCreateRequest(BaseModel):
             "createdAt": int(time.time() * 1000),
             "fieldUpdates": {},
         }
+
+
+# Filter fields of a user-created Smart List. The client writes every one of
+# them, null when the condition is unused; the server applies no defaults.
+SMART_LIST_FILTER_FIELDS = (
+    "itemType", "recurring", "parentId", "goalId", "title", "hasTime", "created",
+    "day", "dueDate", "endDate", "startDate", "pledgeDate", "firstScheduled",
+    "procrastinationCount", "backburner", "orbit", "isStarred", "isFrogged",
+    "isUrgent", "mentalWeight", "taskSize", "positiveEnergy", "energyLevel",
+    "labelIds", "project", "nextStep", "planAhead", "timeEstimate", "timeBlock",
+    "advanced",
+)
+
+# Smart List IDs written by the client are 13 characters long.
+SMART_LIST_ID_LENGTH = 13
+
+
+class SmartListCreateRequest(BaseModel):
+    """Input for create_smart_list — the basic (non-advanced) filter conditions.
+
+    Conditions combine with AND. Each one is stored as an {op, val} clause on
+    the field of the same name; unused conditions are stored as null.
+    """
+
+    name: str = Field(..., min_length=1, description="Display name of the Smart List")
+    category_id: str | None = Field(
+        default=None,
+        description="Categories _id. Matches items anywhere below it: the client "
+        "evaluates the clause as an ancestor test, not as a direct-parent test.",
+    )
+    recurring: Literal["n", "rt", "rp", "y"] | None = Field(
+        default=None,
+        description="'n' non-recurring, 'rt' recurring tasks, 'rp' recurring "
+        "projects, 'y' any recurring",
+    )
+    label_id: str | None = Field(
+        default=None, description="Labels _id the items must carry"
+    )
+    group_by: str | None = Field(
+        default=None, description="Grouping of the list itself, e.g. 'projectId'"
+    )
+
+    def to_document(self) -> dict[str, Any]:
+        """Build the document to send to /doc/create."""
+        now = int(time.time() * 1000)
+        doc: dict[str, Any] = {
+            "_id": new_document_id(SMART_LIST_ID_LENGTH),
+            "db": "SmartLists",
+            "name": self.name,
+            "groupBy": self.group_by,
+            "oneRT": True,
+            "removeRedundancies": True,
+            "sort": [],
+            "limit": 0,
+            "refill": "auto",
+            "createdAt": now,
+            "updatedAt": now,
+            "fieldUpdates": {},
+        }
+        doc.update(dict.fromkeys(SMART_LIST_FILTER_FIELDS))
+        if self.category_id:
+            doc["parentId"] = {"op": "in", "val": self.category_id}
+        if self.recurring:
+            doc["recurring"] = {"op": self.recurring}
+        if self.label_id:
+            doc["labelIds"] = {"op": "in", "val": self.label_id}
+        return doc
