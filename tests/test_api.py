@@ -1063,6 +1063,65 @@ class TestDeleteDocumentTool:
         client.delete_document.assert_not_called()
         client.get_children.assert_not_called()
 
+    @staticmethod
+    def _smart_list_client(structure: Any) -> MagicMock:
+        docs = {
+            "sl1": {"_id": "sl1", "db": "SmartLists", "name": "Work · Tools"},
+            "strategySettings.customStructure": structure,
+        }
+        client = MagicMock(spec=MarvinAPIClient)
+
+        def get_document(doc_id: str) -> Any:
+            value = docs[doc_id]
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        client.get_document.side_effect = get_document
+        client.delete_document.return_value = {}
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_unreferenced_smart_list_is_deleted(self, mock_create: MagicMock) -> None:
+        client = self._smart_list_client(
+            {"val": [{"id": "s1", "title": "Heute"}, {"id": "s2", "smartList": "other"}]}
+        )
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_document_tool("sl1"))
+
+        assert result.success is True
+        assert result.data["deleted_title"] == "Work · Tools"
+        assert result.data["deleted_type"] == "smart list"
+        client.delete_document.assert_called_once_with("sl1")
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_smart_list_driving_a_section_is_blocked(
+        self, mock_create: MagicMock
+    ) -> None:
+        client = self._smart_list_client(
+            {"val": [{"id": "s2", "title": "Tools", "smartList": "sl1"}]}
+        )
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_document_tool("sl1"))
+
+        assert result.success is False
+        assert "Tools" in result.summary.text
+        client.delete_document.assert_not_called()
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_smart_list_without_custom_sections_is_deleted(
+        self, mock_create: MagicMock
+    ) -> None:
+        client = self._smart_list_client(RuntimeError("404 not found"))
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_document_tool("sl1"))
+
+        assert result.success is True
+        client.delete_document.assert_called_once_with("sl1")
+
 
 class TestSettersBuilder:
     """Unit tests for build_setters — no API key required."""

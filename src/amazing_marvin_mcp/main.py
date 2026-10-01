@@ -613,12 +613,32 @@ async def create_smart_list(
         return create_error_response(e, "/doc/create", debug, start_time)
 
 
+def _sections_using_smart_list(api_client: Any, smart_list_id: str) -> list[str]:
+    """Titles of the Day View custom sections that are driven by a Smart List.
+
+    An account that never enabled custom sections has no customStructure
+    document, so a failed read means no section can refer to the list.
+    """
+    try:
+        structure = api_client.get_document("strategySettings.customStructure")
+    except Exception:
+        return []
+    entries = structure.get("val") if isinstance(structure, dict) else None
+    return [
+        str(entry.get("title") or entry.get("id"))
+        for entry in entries or []
+        if isinstance(entry, dict) and entry.get("smartList") == smart_list_id
+    ]
+
+
 async def delete_document(item_id: str, debug: bool = False) -> StandardResponse:
-    """Permanently delete an Amazing Marvin task or empty project/category.
+    """Permanently delete an Amazing Marvin task, empty project/category or Smart List.
 
     Safety checks run before deletion:
     - Plain tasks (db="Tasks") are deleted immediately.
     - Projects/categories are only deleted if they have no children.
+    - Smart Lists are only deleted if no Day View custom section
+      (strategySettings.customStructure) points at them.
     - All other document types (Goals, Labels, etc.) are blocked.
 
     Requires AMAZING_MARVIN_FULL_ACCESS_TOKEN.
@@ -639,9 +659,26 @@ async def delete_document(item_id: str, debug: bool = False) -> StandardResponse
 
         is_task = db == "Tasks" and doc_type not in ("project", "category")
         is_container = doc_type in ("project", "category")
+        is_smart_list = db == "SmartLists"
 
         if is_task:
             pass  # safe to delete
+        elif is_smart_list:
+            title = doc.get("name") or item_id
+            doc_type = "smart list"
+            sections = _sections_using_smart_list(api_client, item_id)
+            api_calls += 1
+            if sections:
+                return create_error_response(
+                    ValueError(
+                        f"Smart List '{title}' drives the Day View section(s) "
+                        f"{', '.join(sections)}. Remove it from "
+                        "strategySettings.customStructure first."
+                    ),
+                    "/doc/delete",
+                    debug,
+                    start_time,
+                )
         elif is_container:
             children = api_client.get_children(item_id)
             api_calls += 1
